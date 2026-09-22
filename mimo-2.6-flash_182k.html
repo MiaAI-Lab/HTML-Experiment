@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>HOPF · a fibration of the 3-sphere</title>
+<meta name="description" content="An interactive rendering of the Hopf fibration — mutually linked circles lifted from the 3-sphere onto your screen. No libraries, Canvas 2D only.">
+<style>
+  *{box-sizing:border-box}
+  html,body{width:100%;height:100%;margin:0;padding:0;background:#04050a;overflow:hidden}
+  body{
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:rgba(240,242,255,.72);
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  /* ---------- the artwork ---------- */
+  #scene{
+    position:fixed;inset:0;display:block;z-index:0;
+    background:#04050a;touch-action:none;cursor:grab;
+  }
+  #scene.grabbing{cursor:grabbing}
+
+  /* ---------- the frame of type around it ---------- */
+  #ui{
+    position:fixed;inset:0;z-index:2;pointer-events:none;
+    animation:rise 2.6s cubic-bezier(.2,.7,.2,1) .3s both;
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  #ui>*{position:absolute}
+
+  #ui::before,#ui::after{
+    content:"";position:absolute;width:15px;height:15px;
+    border:1px solid rgba(255,255,255,.13);
+  }
+  #ui::before{top:18px;left:18px;border-right:0;border-bottom:0}
+  #ui::after{bottom:18px;right:18px;border-left:0;border-top:0}
+
+  #masthead{top:34px;left:36px;max-width:44vw}
+  #masthead h1{
+    margin:0;font-size:13px;font-weight:500;letter-spacing:.62em;
+    text-transform:uppercase;color:rgba(255,255,255,.9);
+  }
+  #masthead p{
+    margin:10px 0 0;font-size:10.5px;letter-spacing:.2em;line-height:1.8;
+    text-transform:uppercase;color:rgba(255,255,255,.34);
+  }
+
+  #hud{
+    left:36px;bottom:32px;white-space:pre;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    font-size:11px;line-height:1.75;letter-spacing:.05em;
+    color:rgba(255,255,255,.42);
+  }
+  #test{color:rgba(255,255,255,.3)}
+  #test.pass{color:rgba(140,255,196,.62)}
+  #test.fail{color:rgba(255,120,120,.75)}
+
+  #hint{
+    left:50%;bottom:34px;transform:translateX(-50%);
+    font-size:10.5px;letter-spacing:.26em;text-transform:uppercase;
+    color:rgba(255,255,255,.4);white-space:nowrap;
+    transition:opacity 1.2s ease;
+  }
+  #hint.off{opacity:0}
+
+  #legend{right:36px;bottom:32px;width:186px;text-align:right}
+  #legend .bar{
+    height:3px;border-radius:2px;opacity:.88;
+    background:linear-gradient(90deg,#ffe9bb 0%,#ffb24a 22%,#ff5c74 48%,#ce56ff 74%,#5c72ff 100%);
+  }
+  #legend .cap{
+    margin-top:9px;font-size:9.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:rgba(255,255,255,.3);
+  }
+
+  @media (max-width:720px){
+    #legend{display:none}
+    #masthead{top:28px;left:24px}
+    #hud{left:24px;bottom:26px;font-size:10px}
+    #hint{bottom:76px;font-size:9.5px;letter-spacing:.18em}
+  }
+  @media (prefers-reduced-motion:reduce){
+    #ui{animation:none}
+    #hint{transition:none}
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="ui">
+  <div id="masthead">
+    <h1>Hopf</h1>
+    <p>the 3&#8209;sphere, fibred by circles<br>S&#179; &#8594; S&#178; &#183; every thread linked with every other exactly once</p>
+  </div>
+
+  <div id="hint">drag to orbit &#183; scroll to zoom &#183; shift + drag to twist through 4&#8209;space</div>
+
+  <div id="hud"><span id="hudvals">initialising&#8230;</span>
+<span id="test">self-test &#183; running</span></div>
+
+  <div id="legend">
+    <div class="bar"></div>
+    <div class="cap">latitude &#952; of the base point</div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   HOPF — an interactive picture of the Hopf fibration.
+
+   The 3-sphere S^3 is the set of unit quaternions q = (x,y,z,w).
+   The Hopf map h: S^3 -> S^2 sends q to 2 z conj(w) in the first two
+   coordinates and |z|^2 - |w|^2 in the third.  Every fibre h^-1(p) is a
+   great circle on S^3; any two of them are linked exactly once.
+
+   We sample base points on a latitudinal band of S^2, lift them to their
+   circles in S^3 with an explicit parameterisation
+
+       q(psi) = ( cos(t/2) cos(psi + ph/2),
+                  cos(t/2) sin(psi + ph/2),
+                  sin(t/2) cos(psi - ph/2),
+                  sin(t/2) sin(psi - ph/2)  )
+
+   over the base point (sin t cos ph, sin t sin ph, cos t), rotate in
+   4-space, project stereographically to R^3, then to the screen.  Because
+   a great circle of S^3 maps to a circle or line of R^3, every thread on
+   screen is a true circle; stereographic projection preserves linking, so
+   every pair of threads links exactly once.
+
+   No libraries.  Canvas 2D, DOM events, requestAnimationFrame.
+   ===================================================================== */
+
+var TAU = Math.PI * 2;
+var el = function (id) { return document.getElementById(id); };
+
+/* ---------------------------------------------------------- palette ---- */
+/* colour as a function of the base point's latitude t in [0,1] */
+var PAL = [
+  [0.00, 255, 233, 187],
+  [0.22, 255, 178,  74],
+  [0.48, 255,  92, 116],
+  [0.74, 206,  86, 255],
+  [1.00,  92, 114, 255]
+];
+var PAL_N = 512;
+var PAL_CACHE = [];
+function ramp(t) {
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  var i = (t * (PAL_N - 1)) | 0;
+  var got = PAL_CACHE[i];
+  if (got) { return got; }
+  /* t and the stop positions are both in [0,1]; comparing an unscaled
+     index against them extrapolates past the last stop and clamps */
+  var x = t, k = 0;
+  while (k < PAL.length - 2 && x > PAL[k + 1][0]) { k++; }
+  var a = PAL[k], b = PAL[k + 1];
+  var f = (x - a[0]) / (b[0] - a[0]);
+  var out = [
+    Math.round(a[1] + (b[1] - a[1]) * f),
+    Math.round(a[2] + (b[2] - a[2]) * f),
+    Math.round(a[3] + (b[3] - a[3]) * f)
+  ];
+  PAL_CACHE[i] = out;
+  return out;
+}
+
+/* --------------------------------------------------------- the fibres -- */
+var TH_MIN = 0.06, TH_MAX = 2.02;      /* latitude band of base points    */
+var N_FIELD = 140;                     /* the diffuse field               */
+var HERO_LATS = [0.70, 1.20, 1.70];    /* three lattices of "hero" circles */
+var HERO_EACH = 8;
+var FIBERS = [];
+
+function buildFibres() {
+  var ga = Math.PI * (3 - Math.sqrt(5));           /* golden angle */
+  var cHi = Math.cos(TH_MIN), cLo = Math.cos(TH_MAX);
+  var i, k, c, th, ph;
+  for (i = 0; i < N_FIELD; i++) {
+    c = cHi + (cLo - cHi) * ((i + 0.5) / N_FIELD);
+    th = Math.acos(c < -1 ? -1 : (c > 1 ? 1 : c));
+    ph = (i * ga) % TAU;
+    FIBERS.push(makeFibre(th, ph, false));
+  }
+  for (k = 0; k < HERO_LATS.length; k++) {
+    th = HERO_LATS[k];
+    for (i = 0; i < HERO_EACH; i++) {
+      ph = (i + 0.5) * TAU / HERO_EACH + 1.7 * Math.sin(3 * th);
+      FIBERS.push(makeFibre(th, ph, true));
+    }
+  }
+  for (i = 0; i < FIBERS.length; i++) { FIBERS[i].idx = i; }
+}
+
+function makeFibre(th, ph, hero) {
+  var t = (th - TH_MIN) / (TH_MAX - TH_MIN);
+  var col = ramp(t);
+  return {
+    th: th, ph: ph, hero: hero, idx: 0,
+    col: col,                                    /* [r,g,b]            */
+    rgb: col[0] + "," + col[1] + "," + col[2],
+    /* the bead phase varies smoothly over the base sphere, so the
+       travelling highlights sweep across the structure as one wave */
+    bead: 3.1 * Math.sin(th * 1.7) + 1.3 * ph,
+    ns: 110,                                     /* tessellation, adaptive */
+    xs: [[], []], ys: [[], []], nrun: [0, 0],     /* front / back runs */
+    dsum: [0, 0], depAvg: 0.85,                  /* depth cue, per run   */
+    len: 0,                                      /* screen path length   */
+    fx: [], fy: [], fn: 0,                       /* the whole closed path */
+    arc: []                                      /* cumulative arc length */
+  };
+}
+
+/* ---------------------------------------------------------- camera ----- */
+var cam = {
+  az: -0.60, el: 0.55,      /* orbit angles                              */
+  dist: 9.5,                /* eye distance, damped toward .target       */
+  target: 9.5,
+  vaz: 0, vel: 0,           /* inertial flick                            */
+  u34: 0, u14: 0,           /* user's twist through 4-space              */
+  g34: 0, g14: 0            /* total 4D angles = user + ambient drift    */
+};
+var CAM0 = { az: -0.60, el: 0.55, dist: 9.5 };
+var ZOOM_MIN = 5, ZOOM_MAX = 16;
+
+function wrapPi(a) { return ((a + Math.PI) % TAU + TAU) % TAU - Math.PI; }
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+var pointers = new Map();          /* id -> {x,y} for pinch               */
+var mode = "";                     /* "orbit" | "twist" | ""              */
+var lastX = 0, lastY = 0, pinchD = 0;
+var ambient = true;                /* slow drift & flowing beads          */
+var reduced = false;
+try {
+  reduced = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) { ambient = false; }
+} catch (e) { /* matchMedia optional */ }
+
+var scene = el("scene");
+var hintEl = el("hint");
+var hintOff = false;
+function dismissHint() {
+  if (hintOff || testing || !hintEl) { return; }
+  hintOff = true;
+  hintEl.className = "off";
+}
+
+function localXY(e) {
+  var r = scene.getBoundingClientRect();
+  return [e.clientX - r.left, e.clientY - r.top];
+}
+
+function onDown(e) {
+  if (e.isPrimary === false) { return; }
+  var p = localXY(e);
+  pointers.set(e.pointerId, undefined === p ? 0 : { x: p[0], y: p[1] });
+  if (pointers.size === 2) {
+    var it = pointers.values(), a = it.next().value, b = it.next().value;
+    pinchD = Math.hypot(b.x - a.x, b.y - a.y);
+    mode = "";
+  } else {
+    lastX = p[0]; lastY = p[1];
+    mode = (e.shiftKey || e.altKey || e.button === 1 || e.button === 2) ? "twist" : "orbit";
+    cam.vaz = 0; cam.vel = 0;
+  }
+  if (scene.classList) { scene.classList.add("grabbing"); }
+  dismissHint();
+  if (e.preventDefault) { e.preventDefault(); }
+}
+
+function onMove(e) {
+  if (!pointers.has(e.pointerId)) { return; }
+  var p = localXY(e);
+  pointers.set(e.pointerId, { x: p[0], y: p[1] });
+
+  if (pointers.size >= 2) {                       /* pinch = dolly       */
+    var it = pointers.values(), a = it.next().value, b = it.next().value;
+    var d = Math.hypot(b.x - a.x, b.y - a.y);
+    if (pinchD > 0 && d > 0) {
+      cam.target = clamp(cam.target * (pinchD / d), ZOOM_MIN, ZOOM_MAX);
+    }
+    pinchD = d;
+    dismissHint();
+    return;
+  }
+
+  var dx = p[0] - lastX, dy = p[1] - lastY;
+  lastX = p[0]; lastY = p[1];
+  if (mode === "orbit") {
+    var daz = dx * 0.0052, del = -dy * 0.0052;
+    cam.az += daz;
+    cam.el = clamp(cam.el + del, -1.35, 1.35);
+    cam.vaz = daz; cam.vel = del;
+  } else if (mode === "twist") {
+    cam.u34 = wrapPi(cam.u34 + dx * 0.0034);
+    cam.u14 = wrapPi(cam.u14 + dy * 0.0034);
+  }
+  if (e.preventDefault) { e.preventDefault(); }
+}
+
+function onUp(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) { pinchD = 0; }
+  if (pointers.size === 0) {
+    mode = "";
+    if (scene.classList) { scene.classList.remove("grabbing"); }
+  }
+}
+
+function onWheel(e) {
+  var d = e.deltaY;
+  if (typeof d !== "number" || !isFinite(d)) { return; }
+  if (e.deltaMode === 1) { d *= 16; }
+  else if (e.deltaMode === 2) { d *= 400; }
+  cam.target = clamp(cam.target * Math.exp(d * 0.0013), ZOOM_MIN, ZOOM_MAX);
+  dismissHint();
+  if (e.preventDefault) { e.preventDefault(); }
+}
+
+function resetCam() {
+  cam.az = CAM0.az; cam.el = CAM0.el;
+  cam.dist = cam.target = CAM0.dist;
+  cam.u34 = 0; cam.u14 = 0; cam.vaz = 0; cam.vel = 0;
+}
+
+function bindInput() {
+  if (window.PointerEvent) {
+    scene.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  } else {
+    /* engines without Pointer Events: same handlers, fed by mouse + touch */
+    scene.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    var each = function (e, fn) {
+      if (!e.changedTouches) { fn(e); return; }
+      for (var i = 0; i < e.changedTouches.length; i++) {
+        var t = e.changedTouches[i];
+        fn({ clientX: t.clientX, clientY: t.clientY, pointerId: "t" + t.identifier,
+             button: 0, buttons: 1, shiftKey: e.shiftKey, altKey: e.altKey,
+             isPrimary: i === 0,
+             preventDefault: (function (ev) { return function () { ev.preventDefault(); }; }(e)) });
+      }
+    };
+    scene.addEventListener("touchstart", function (e) {
+      each(e, onDown); if (e.cancelable) { e.preventDefault(); }
+    }, false);
+    window.addEventListener("touchmove", function (e) {
+      each(e, onMove); if (e.cancelable) { e.preventDefault(); }
+    }, false);
+    window.addEventListener("touchend", function (e) { each(e, onUp); }, false);
+    window.addEventListener("touchcancel", function (e) { each(e, onUp); }, false);
+  }
+  scene.addEventListener("wheel", onWheel, { passive: false });
+  scene.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  scene.addEventListener("dblclick", resetCam);
+  window.addEventListener("keydown", function (e) {
+    var k = e.key;
+    if (k === " " || k === "Spacebar") {
+      ambient = !ambient;
+      if (e.preventDefault) { e.preventDefault(); }
+      dismissHint();
+    } else if (k === "r" || k === "R") {
+      resetCam();
+    }
+  });
+}
+
+/* --------------------------------------------------- canvas plumbing --- */
+var ctx = scene.getContext("2d");
+/* five scratch canvases: the glow is built by a chain of gentle
+   downsamples (no ctx.filter needed) then summed and blitted back */
+var bG1 = document.createElement("canvas");
+var bG2 = document.createElement("canvas");
+var bA = document.createElement("canvas");
+var bB = document.createElement("canvas");
+var bC = document.createElement("canvas");     /* both glows, low-res       */
+var ctxG1 = bG1.getContext("2d");
+var ctxG2 = bG2.getContext("2d");
+var ctxA = bA.getContext("2d");
+var ctxB = bB.getContext("2d");
+var ctxC = bC.getContext("2d");
+var W = 1, H = 1, DPR = 1, FOCAL = 1000, CX = 0, CY = 0;
+var bgGrad = null, vignette = null;
+
+function resize() {
+  DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  W = Math.max(1, Math.round(window.innerWidth));
+  H = Math.max(1, Math.round(window.innerHeight));
+  scene.width = Math.round(W * DPR);
+  scene.height = Math.round(H * DPR);
+  scene.style.width = W + "px";
+  scene.style.height = H + "px";
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+  bG1.width = Math.max(1, Math.round(scene.width * 0.60));
+  bG1.height = Math.max(1, Math.round(scene.height * 0.60));
+  bG2.width = Math.max(1, Math.round(scene.width * 0.36));
+  bG2.height = Math.max(1, Math.round(scene.height * 0.36));
+  bA.width = Math.max(1, Math.round(scene.width * 0.20));
+  bA.height = Math.max(1, Math.round(scene.height * 0.20));
+  bB.width = Math.max(1, Math.round(scene.width * 0.071));
+  bB.height = Math.max(1, Math.round(scene.height * 0.071));
+  bC.width = bA.width;
+  bC.height = bA.height;
+
+  var S = Math.min(W, H);
+  FOCAL = 1.389 * S;          /* framing measured in the preview render  */
+  CX = W / 2;
+  CY = H / 2 + S / 30;
+
+  bgGrad = ctx.createRadialGradient(CX, CY * 0.94, 0, CX, CY, Math.max(W, H) * 0.78);
+  bgGrad.addColorStop(0, "#0b0e20");
+  bgGrad.addColorStop(0.55, "#070913");
+  bgGrad.addColorStop(1, "#04050a");
+
+  vignette = ctx.createRadialGradient(CX, CY, Math.min(W, H) * 0.30,
+                                      CX, CY, Math.max(W, H) * 0.76);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(1, "rgba(0,0,0,0.55)");
+}
+
+/* a small cached colour-string helper: no per-frame garbage storms */
+var cssCache = Object.create(null), cssCount = 0;
+function css(r, g, b, a) {
+  a = Math.round(a * 50) / 50;
+  if (a <= 0) { return "rgba(0,0,0,0)"; }
+  if (a > 1) { a = 1; }
+  var k = r + "," + g + "," + b + "," + a;
+  var v = cssCache[k];
+  if (v === undefined) {
+    if (cssCount > 8000) { cssCache = Object.create(null); cssCount = 0; }
+    v = "rgba(" + r + "," + g + "," + b + "," + a + ")";
+    cssCache[k] = v; cssCount++;
+  }
+  return v;
+}
+
+/* ---------------------------------------------------------- starfield -- */
+var STARS = [];
+function buildStars() {
+  var n = 340;
+  for (var i = 0; i < n; i++) {
+    STARS.push({
+      nx: Math.random(), ny: Math.random(),
+      r: 0.35 + Math.random() * Math.random() * 1.5,
+      b: 0.05 + Math.random() * Math.random() * 0.34,
+      s: Math.random() * TAU,
+      sp: 0.25 + Math.random() * 1.1
+    });
+  }
+}
+
+/* --------------------------------------------------- S^3 geometry ------ */
+/* q(psi) on the fibre over (sin t cos ph, sin t sin ph, cos t) */
+function rotate4(x, y, z, w, g34, g14, g12, out) {
+  var c = Math.cos(g34), s = Math.sin(g34);
+  var z1 = z * c - w * s, w1 = z * s + w * c;      /* plane (3,4) */
+  z = z1; w = w1;
+  c = Math.cos(g14); s = Math.sin(g14);
+  var x1 = x * c - w * s; w1 = x * s + w * c;      /* plane (1,4) */
+  x = x1; w = w1;
+  c = Math.cos(g12); s = Math.sin(g12);
+  x1 = x * c - y * s; var y1 = x * s + y * c;      /* plane (1,2) */
+  out[0] = x1; out[1] = y1; out[2] = z; out[3] = w;
+  return out;
+}
+var _q = [0, 0, 0, 0];
+
+/* stereographic projection S^3 \ {south pole} -> R^3, then the camera */
+function toScreen(q, out) {
+  var d = 1 + q[3];
+  if (d < 0.12) { d = 0.12; }
+  var x = q[0] / d, y = q[1] / d, z = q[2] / d;
+  var ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+  var rx = x * ca + z * sa, rz = -x * sa + z * ca;
+  var ce = Math.cos(cam.el), se = Math.sin(cam.el);
+  var ry = y * ce - rz * se; rz = y * se + rz * ce;
+  var depth = cam.dist - rz;
+  if (depth < 0.4) { depth = 0.4; }
+  var k = FOCAL / depth;
+  out[0] = CX + rx * k;
+  out[1] = CY - ry * k;
+  out[2] = rz;
+  out[3] = depth;
+  return out;
+}
+var _p = [0, 0, 0, 0];
+
+/* Project one whole fibre: adaptive tessellation, and the path is split
+   into the runs that face the viewer and the runs that face away, so
+   depth can be shaded without breaking the path into single points. */
+function projectFibre(f) {
+  var ns = f.ns | 0;
+  if (ns < 24) { ns = 24; }
+  var th = f.th, ph = f.ph;
+  var c2 = Math.cos(th * 0.5), s2 = Math.sin(th * 0.5);
+  var g34 = cam.g34, g14 = cam.g14;
+  var c34 = Math.cos(g34), s34 = Math.sin(g34);
+  var c14 = Math.cos(g14), s14 = Math.sin(g14);
+  var ca = Math.cos(cam.az), sa = Math.sin(cam.az);
+  var ce = Math.cos(cam.el), se = Math.sin(cam.el);
+  var dist = cam.dist, f0 = FOCAL;
+  var backX = f.xs[1], backY = f.ys[1], frontX = f.xs[0], frontY = f.ys[0];
+  var fx = f.fx, fy = f.fy;
+  backX.length = 0; backY.length = 0;
+  frontX.length = 0; frontY.length = 0;
+  fx.length = 0; fy.length = 0;
+  f.arc.length = 0;
+  var minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+  var dsum0 = 0, dsum1 = 0, plen = 0, psx = 0, psy = 0;
+  var i, psi, a, b, x, y, z, w, t1, t2;
+
+  for (i = 0; i <= ns; i++) {
+    psi = (i === ns) ? 0 : (i * TAU / ns);        /* closed circle */
+    a = psi + ph * 0.5; b = psi - ph * 0.5;
+    x = c2 * Math.cos(a); y = c2 * Math.sin(a);
+    z = s2 * Math.cos(b); w = s2 * Math.sin(b);
+    t1 = z * c34 - w * s34; t2 = z * s34 + w * c34;      /* (3,4) */
+    z = t1; w = t2;
+    t1 = x * c14 - w * s14; t2 = x * s14 + w * c14;      /* (1,4) */
+    x = t1; w = t2;
+    /* stereographic */
+    var d = 1 + w;
+    if (d < 0.12) { d = 0.12; }
+    x /= d; y /= d; z /= d;
+    /* camera */
+    var rx = x * ca + z * sa, rz = -x * sa + z * ca;
+    var ry = y * ce - rz * se; rz = y * se + rz * ce;
+    var depth = dist - rz;
+    if (depth < 0.4) { depth = 0.4; }
+    var k = f0 / depth;
+    var sx = CX + rx * k, sy = CY - ry * k;
+    if (i > 0) { plen += Math.sqrt((sx - psx) * (sx - psx) + (sy - psy) * (sy - psy)); }
+    psx = sx; psy = sy;
+    f.arc.push(plen);
+    /* the preview's depth cue: 0.85 * (dist/depth)^2, clamped to [.5,1.55] */
+    var dep = 0.85 * (dist / depth) * (dist / depth);
+    if (dep < 0.5) { dep = 0.5; }
+    if (dep > 1.55) { dep = 1.55; }
+    fx.push(sx); fy.push(sy);
+    if (sx < minX) { minX = sx; } if (sx > maxX) { maxX = sx; }
+    if (sy < minY) { minY = sy; } if (sy > maxY) { maxY = sy; }
+    if (rz > 0) { frontX.push(sx); frontY.push(sy); dsum0 += dep; }
+    else { backX.push(sx); backY.push(sy); dsum1 += dep; }
+  }
+  f.fn = fx.length;
+  f.nrun[0] = frontX.length; f.nrun[1] = backX.length;
+  f.dsum[0] = dsum0; f.dsum[1] = dsum1;
+  f.len = plen;
+  f.depAvg = (dsum0 + dsum1) / Math.max(1, frontX.length + backX.length);
+
+  /* how finely must this circle be sampled?  sagitta stays well under a
+     pixel at 240 segments, and the tessellation is where frames go */
+  var r = ((maxX - minX) + (maxY - minY)) * 0.25;
+  var want = TAU * r / 3;
+  if (want < 36) { want = 36; }
+  if (want > 240) { want = 240; }
+  f.ns = Math.round(f.ns * 0.75 + want * 0.25);
+}
+
+/* --------------------------------------------------------- painting ---- */
+var THREAD_ALPHA = 0.10;   /* the preview's thread_alpha                 */
+var BEAD_ALPHA = 0.34;     /* the preview's bead_alpha                   */
+var HERO_BOOST = 2.6;      /* the preview's hero_boost                   */
+var EXPOSURE = 1.0;        /* global trim                                */
+var BEAD_PERIOD = 0.075;   /* laps of the fibre parameter per second     */
+
+function pathStroke(xs, ys, n) {
+  ctx.beginPath();
+  ctx.moveTo(xs[0], ys[0]);
+  for (var i = 1; i < n; i++) { ctx.lineTo(xs[i], ys[i]); }
+  ctx.stroke();
+}
+
+/* stroke just the stretch of the path between two arc-length parameters:
+   the same mark setLineDash would make, without asking the engine to dash
+   (and therefore re-tessellate) the whole circle first */
+function strokeSpan(f, u0, u1) {
+  var xs = f.fx, ys = f.fy, arc = f.arc, n = f.fn;
+  if (n < 3 || u1 - u0 < 1) { return; }
+  var i = 1;
+  while (i < n && arc[i] <= u0) { i++; }
+  if (i >= n) { return; }
+  var i0 = i - 1, seg = arc[i] - arc[i0];
+  var t0 = seg > 0 ? (u0 - arc[i0]) / seg : 0;
+  ctx.beginPath();
+  ctx.moveTo(xs[i0] + (xs[i] - xs[i0]) * t0,
+             ys[i0] + (ys[i] - ys[i0]) * t0);
+  for (; i < n && arc[i] < u1; i++) { ctx.lineTo(xs[i], ys[i]); }
+  if (i < n) {
+    var seg2 = arc[i] - arc[i - 1];
+    var t1 = seg2 > 0 ? (u1 - arc[i - 1]) / seg2 : 1;
+    ctx.lineTo(xs[i - 1] + (xs[i] - xs[i - 1]) * t1,
+               ys[i - 1] + (ys[i] - ys[i - 1]) * t1);
+  } else {
+    ctx.lineTo(xs[n - 1], ys[n - 1]);
+  }
+  ctx.stroke();
+}
+
+/* one travelling highlight: the principal U(1) action sliding along the
+   fibre, placed at a spherical-harmonic phase of the base point */
+function drawBead(f, k, amp, t, rv) {
+  var L = f.len;
+  if (!(L > 10)) { return; }
+  var dir = (k === 2) ? 1 : -0.62;
+  var off = dir * (t * BEAD_PERIOD)
+          + 1.15 * Math.sin(f.th) * k * 0.3
+          + 0.9 * f.ph * (k % 3) / 3;
+  var fr = off - Math.floor(off);
+  var d = L * 0.11;
+  var wgt = BEAD_ALPHA * amp * f.depAvg * (f.hero ? 1.6 : 1);
+  var a = (1 - Math.exp(-wgt * 0.67)) * EXPOSURE * rv;
+  if (a < 0.004) { return; }
+  var u0 = fr * L, u1 = u0 + d;
+  ctx.strokeStyle = css(f.col[0], f.col[1], f.col[2], a);
+  ctx.lineWidth = f.hero ? 3.4 : 2.4;
+  if (u1 <= L) {
+    strokeSpan(f, u0, u1);
+  } else {
+    strokeSpan(f, u0, L);
+    strokeSpan(f, 0, u1 - L);
+  }
+}
+
+function drawFibres(t, reveal) {
+  var n = FIBERS.length, i, j, b;
+  for (i = 0; i < n; i++) {
+    var f = FIBERS[i];
+    projectFibre(f);
+    /* the structure draws itself in, ordered round the base sphere */
+    var rv = reveal * 1.45 - (i / n) * 0.45;
+    if (rv > 1) { rv = 1; }
+    if (rv <= 0.003) { continue; }
+    var col = f.col;
+    var amul = f.hero ? HERO_BOOST : 1;
+
+    for (b = 0; b < 2; b++) {                 /* 0 = toward, 1 = away  */
+      var xs = f.xs[b], ys = f.ys[b], cnt = xs.length;
+      if (cnt < 2) { continue; }
+      var dep = f.nrun[b] ? (f.dsum[b] / f.nrun[b]) : 0.85;
+      if (!(dep > 0)) { dep = 0.85; }
+      var wide = (b === 0);
+      var wgt = THREAD_ALPHA * amul * dep;
+      /* the preview splats ~2.1 deposits per pixel along a thin line and
+         ~0.55 per pixel when the line is spread over a wider kernel; a
+         canvas stroke paints one flat alpha, so invert that here */
+      var a = (1 - Math.exp(-wgt * (wide ? 1.15 : 2.1))) * EXPOSURE * rv;
+      if (a < 0.004) { continue; }
+      ctx.strokeStyle = css(col[0], col[1], col[2], a);
+      ctx.lineWidth = wide ? (f.hero ? 3.0 : 1.55) : (f.hero ? 1.8 : 1.0);
+      pathStroke(xs, ys, cnt);
+    }
+
+    drawBead(f, 2, 1.0, t, rv);
+    drawBead(f, 5, 0.65, t, rv);
+  }
+}
+
+function draw(t) {
+  var i, s, a;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalCompositeOperation = "lighter";
+  for (i = 0; i < STARS.length; i++) {
+    s = STARS[i];
+    a = s.b * (0.72 + 0.28 * Math.sin(t * s.sp + s.s));
+    ctx.fillStyle = css(206, 214, 255, a);
+    ctx.fillRect(s.nx * W, s.ny * H, s.r, s.r);
+  }
+
+  drawFibres(t, reveal);
+
+  /* ---- glow: downsample chain, summed low-res, one additive blit ---- */
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctxG1.globalCompositeOperation = "copy";
+  ctxG1.drawImage(scene, 0, 0, bG1.width, bG1.height);
+  ctxG2.globalCompositeOperation = "copy";
+  ctxG2.drawImage(bG1, 0, 0, bG2.width, bG2.height);
+  ctxA.globalCompositeOperation = "copy";
+  ctxA.drawImage(bG2, 0, 0, bA.width, bA.height);
+  ctxB.globalCompositeOperation = "copy";
+  ctxB.drawImage(bA, 0, 0, bB.width, bB.height);
+
+  /* 0.5*mid + 0.3*wide, summed once at low resolution, then ONE additive
+     blit over the scene instead of two full-frame ones */
+  ctxC.globalCompositeOperation = "copy";
+  ctxC.globalAlpha = 0.5;
+  ctxC.drawImage(bA, 0, 0, bC.width, bC.height);
+  ctxC.globalCompositeOperation = "lighter";
+  ctxC.globalAlpha = 0.3;
+  ctxC.drawImage(bB, 0, 0, bC.width, bC.height);
+  ctxC.globalAlpha = 1;
+
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = 1;
+  ctx.drawImage(bC, 0, 0, scene.width, scene.height);
+
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, W, H);
+}
+
+/* ------------------------------------------------------------- loop ---- */
+var t0 = 0, lastNow = 0, frameCount = 0, reveal = 0;
+var fps = 60, fpsN = 0, fpsAcc = 0, hudAcc = 0;
+var hudvals = el("hudvals");
+var testEl = el("test");
+
+function update(dt, t) {
+  if (ambient) { cam.az += 0.035 * dt; }
+  if (mode === "" && (cam.vaz !== 0 || cam.vel !== 0)) {
+    cam.az += cam.vaz;
+    cam.el = clamp(cam.el + cam.vel, -1.35, 1.35);
+    cam.vaz *= 0.90; cam.vel *= 0.90;
+    if (cam.vaz > -1e-5 && cam.vaz < 1e-5) { cam.vaz = 0; }
+    if (cam.vel > -1e-5 && cam.vel < 1e-5) { cam.vel = 0; }
+  }
+  cam.dist += (cam.target - cam.dist) * Math.min(1, dt * 9);
+  cam.g34 = cam.u34 + (ambient ? 0.36 * Math.sin(t * 0.11) : 0);
+  cam.g14 = cam.u14 + (ambient ? 0.30 * Math.sin(t * 0.083 + 1.7) : 0);
+  reveal = reduced ? 1 : Math.min(1, reveal + dt / 2.4);
+}
+
+function updateHud() {
+  if (!hudvals) { return; }
+  function sgn(v) { return (v < 0 ? "−" : "+") + Math.abs(v).toFixed(2); }
+  hudvals.textContent =
+    "orbit  az " + sgn(cam.az) + "   el " + sgn(cam.el) + "\n" +
+    "dolly  " + cam.dist.toFixed(2) + "  (" + Math.round(CAM0.dist / cam.target * 100) + "%)\n" +
+    "4-space  ψ34 " + sgn(cam.g34) + "   ψ14 " + sgn(cam.g14) + "\n" +
+    "fibres " + FIBERS.length + "   " + Math.round(fps) + " fps";
+}
+
+function frame(now) {
+  var dt = (now - lastNow) / 1000;
+  lastNow = now;
+  if (!(dt > 0)) { dt = 1 / 60; }
+  if (dt > 0.1) { dt = 0.1; }
+  if (!t0) { t0 = now; }
+  var t = (now - t0) / 1000;
+
+  update(dt, t);
+  draw(t);
+  frameCount++;
+
+  fpsN++; fpsAcc += dt;
+  if (fpsAcc > 0.5) { fps = fpsN / fpsAcc; fpsN = 0; fpsAcc = 0; }
+  hudAcc += dt;
+  if (hudAcc > 0.2) { hudAcc = 0; updateHud(); }
+
+  requestAnimationFrame(frame);
+}
+
+/* ------------------------------------------------------- self-test ----- */
+/* Synthetic pointer + wheel events are fired at the real element the user
+   would touch; the camera must move, and the render loop must be alive. */
+var testing = true;
+var ok = { orbit: false, twist: false, zoom: false, frames: false, draw: false };
+
+function mk(type, x, y, opts) {
+  opts = opts || {};
+  var o = {
+    bubbles: true, cancelable: true, clientX: x, clientY: y,
+    button: 0, buttons: 1, shiftKey: !!opts.shiftKey, altKey: false
+  };
+  if (window.PointerEvent && type.indexOf("pointer") === 0) {
+    o.pointerId = 1; o.pointerType = "mouse"; o.isPrimary = true;
+    return new PointerEvent(type, o);
+  }
+  return new MouseEvent(type, o);
+}
+
+function fireWheel(x, y, dy) {
+  var ev;
+  try {
+    ev = new WheelEvent("wheel", { bubbles: true, cancelable: true,
+                                   clientX: x, clientY: y, deltaY: dy });
+  } catch (e) {
+    ev = new MouseEvent("wheel", { bubbles: true, cancelable: true,
+                                   clientX: x, clientY: y });
+  }
+  if (typeof ev.deltaY !== "number") { try { ev.deltaY = dy; } catch (e2) {} }
+  scene.dispatchEvent(ev);
+}
+
+function waitFrames(n, ms, cb) {
+  var start = frameCount, began = Date.now();
+  (function poll() {
+    if (frameCount >= start + n) { return cb(true); }
+    if (Date.now() - began > ms) { return cb(frameCount > start); }
+    setTimeout(poll, 50);
+  }());
+}
+
+function sgn(v) { return (v < 0 ? "−" : "+") + Math.abs(v).toFixed(3); }
+
+function selfTest() {
+  var failed = [];
+  var cx = (window.innerWidth || 800) / 2;
+  var cy = (window.innerHeight || 600) / 2;
+  var frames0 = frameCount;
+  var dAz = NaN, dEl = NaN, dU = NaN, z0 = NaN, z1 = NaN;
+
+  try {
+    /* --- one real drag across the canvas must orbit the camera ------ */
+    scene.dispatchEvent(mk("pointerdown", cx, cy, {}));
+    var azA = cam.az, elA = cam.el;
+    scene.dispatchEvent(mk("pointermove", cx + 120, cy - 60, {}));
+    var azB = cam.az, elB = cam.el;
+    scene.dispatchEvent(mk("pointerup", cx + 120, cy - 60, {}));
+    var dAz = azB - azA, dEl = elB - elA;
+    ok.orbit = Math.abs(dEl - 0.312) < 0.02 && Math.abs(dAz - 0.624) < 0.02;
+    if (!ok.orbit) { failed.push("orbit"); }
+
+    /* --- shift-drag must twist through the (3,4) plane of 4-space ---- */
+    var u0 = cam.u34;
+    scene.dispatchEvent(mk("pointerdown", cx, cy, { shiftKey: true }));
+    scene.dispatchEvent(mk("pointermove", cx + 100, cy, { shiftKey: true }));
+    var u1 = cam.u34;
+    scene.dispatchEvent(mk("pointerup", cx + 100, cy, {}));
+    var dU = u1 - u0;
+    ok.twist = Math.abs(dU) > 0.3;
+    if (!ok.twist) { failed.push("twist"); }
+
+    /* --- a wheel gesture must dolly the camera ----------------------- */
+    z0 = cam.target;
+    fireWheel(cx, cy, -240);
+    z1 = cam.target;
+    ok.zoom = z1 < z0 - 1e-4 && isFinite(z1);
+    if (!ok.zoom) { failed.push("zoom"); }
+
+    /* --- the full draw path must run without throwing ---------------- */
+    try { draw(1.0); ok.draw = true; }
+    catch (eDraw) { failed.push("draw:" + eDraw.message); }
+  } catch (eAll) {
+    failed.push("events:" + eAll.message);
+  }
+
+  waitFrames(2, 2500, function (alive) {
+    ok.frames = !!alive;
+    if (!alive) { failed.push("loop"); }
+
+    var pass = ok.orbit && ok.twist && ok.zoom && ok.frames && ok.draw;
+    var line = (pass ? "MIMO self-test PASS" : "MIMO self-test FAIL")
+      + " — orbit Δaz " + sgn(dAz) + " Δel " + sgn(dEl)
+      + ", twist Δψ34 " + sgn(dU)
+      + ", zoom " + (isFinite(z0) ? z0.toFixed(2) : "?")
+      + "→" + (isFinite(z1) ? z1.toFixed(2) : "?")
+      + ", frames +" + (frameCount - frames0)
+      + (pass ? "" : "  failed: " + failed.join(" "));
+    if (pass) {
+      if (window.console && window.console.log) { window.console.log(line); }
+      testEl.textContent = "self-test · PASS";
+      testEl.className = "pass";
+      document.documentElement.setAttribute("data-mimo-selftest", "PASS");
+    } else {
+      if (window.console && window.console.error) { window.console.error(line); }
+      testEl.textContent = "self-test · FAIL";
+      testEl.className = "fail";
+      document.documentElement.setAttribute("data-mimo-selftest", "FAIL");
+    }
+
+    /* leave the picture exactly as the visitor should find it */
+    resetCam();
+    cam.az = CAM0.az; cam.el = CAM0.el;
+    testing = false;
+  });
+}
+
+/* ------------------------------------------------------------- boot ---- */
+function init() {
+  resize();
+  buildFibres();
+  buildStars();
+  bindInput();
+  if (window.addEventListener) {
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+  }
+  updateHud();
+  window.MIMO = {
+    cam: cam, fibres: FIBERS.length, palette: "ember",
+    frames: function () { return frameCount; },
+    selfTest: selfTest, state: function () {
+      return { az: cam.az, el: cam.el, zoom: cam.target, g34: cam.g34 };
+    }
+  };
+  document.documentElement.setAttribute("data-mimo", "ready");
+  requestAnimationFrame(frame);
+  setTimeout(selfTest, 150);
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", init);
+} else {
+  init();
+}
+</script>
+</body>
+</html>

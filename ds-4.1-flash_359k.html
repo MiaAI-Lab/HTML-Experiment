@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>STANDARD MAP — a living phase portrait</title>
+<style>
+  html,body{margin:0;height:100%;background:#03040a;overflow:hidden;color:#e6edf8;
+    font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    -webkit-font-smoothing:antialiased;}
+  #view{position:fixed;inset:0;width:100%;height:100%;display:block;}
+  .ui{position:fixed;z-index:2;pointer-events:none;
+    text-shadow:0 1px 14px rgba(0,0,0,.9),0 0 3px rgba(0,0,0,.85);}
+  #ttl{left:26px;top:20px;max-width:30ch;}
+  #ttl h1{margin:0;font-size:13px;font-weight:600;letter-spacing:.38em;color:#f2f7ff;}
+  #ttl p{margin:8px 0 0;color:#93a6c0;letter-spacing:.02em;line-height:1.7;}
+  .eq{margin-top:9px;color:#c9d8ee;letter-spacing:.01em;opacity:.92;}
+  #read{left:26px;bottom:20px;min-width:236px;}
+  .row{display:flex;justify-content:space-between;gap:18px;color:#8fa2bc;}
+  .row b{color:#eaf1ff;font-weight:600;}
+  .row i{font-style:normal;color:#7f93ae;}
+  #kbar{position:relative;height:3px;margin:9px 0 10px;border-radius:2px;
+    background:linear-gradient(90deg,#243a63 0%,#3d63a8 42%,#8a63c8 62%,#d4685f 82%,#f0b45f 100%);
+    opacity:.85;}
+  #kbar .kc{position:absolute;top:-4px;width:1px;height:11px;background:#ffffff;opacity:.55;}
+  #kbar .km{position:absolute;top:-5px;width:2px;height:13px;background:#fff;
+    box-shadow:0 0 10px #fff,0 0 3px #fff;border-radius:1px;}
+  #hint{right:26px;bottom:20px;text-align:right;color:#7f93ae;letter-spacing:.04em;}
+  #hint em{font-style:normal;color:#dbe6f7;}
+  @media (max-width:720px){
+    #ttl{left:14px;top:12px;} #read{left:14px;bottom:12px;min-width:212px;}
+    #hint{right:14px;bottom:12px;} #ttl p{display:none;}
+  }
+</style>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<div class="ui" id="ttl">
+  <h1>STANDARD MAP</h1>
+  <p>Chirikov&rsquo;s area-preserving twist map. Every orbit colours itself by its own
+     rotation number &mdash; a measured invariant &mdash; and glows in proportion to how
+     invariant its motion really is. KAM tori, island chains, and the chaotic sea.</p>
+  <div class="eq">p&prime; = p + (K/2&pi;)&thinsp;[&thinsp;sin&thinsp;2&pi;q + &epsilon;&thinsp;sin&thinsp;4&pi;q&thinsp;]<br>
+     q&prime; = q + p&prime; &nbsp;(mod&nbsp;1)</div>
+</div>
+
+<div class="ui" id="read">
+  <div class="row"><span>K &mdash; nonlinearity</span><b id="rk">1.0000</b></div>
+  <div class="bar" id="kbar"><span class="kc" id="kc"></span><span class="km" id="km"></span></div>
+  <div class="row"><span>&epsilon; &mdash; 2nd harmonic</span><b id="re">0.000</b></div>
+  <div class="row"><span>view</span><b id="rz">1.0&times;</b></div>
+  <div class="row"><span>invariant orbits</span><b id="ro">&mdash;</b></div>
+</div>
+
+<div class="ui" id="hint">
+  <em>move</em> &middot; K and &epsilon;<br>
+  <em>drag</em> &middot; pan<br>
+  <em>wheel</em> &middot; zoom<br>
+  <em>double-click</em> &middot; reset
+</div>
+
+<script>
+(function () {
+"use strict";
+
+/* ===========================================================================
+   THE MATHEMATICS
+   The Chirikov standard map on the torus T^2 = [0,1)^2, with a second Fourier
+   harmonic in the kick:
+
+       f(q) = (K/2pi) [ sin(2pi q) + eps sin(4pi q) ]
+       p'   = p + f(q)        (mod 1)
+       q'   = q + p'          (mod 1)
+
+   (the portrait is drawn in the shifted momentum coordinate p + 1/2, a pure
+   translation of the torus, so the principal island sits at the centre of frame)
+
+   The Jacobian is [[1, f'(q)], [1, 1 + f'(q)]] whose determinant is exactly 1,
+   so every orbit conserves area and the map is a symplectic twist map for all
+   (K, eps).  It is the canonical model of Hamiltonian chaos: as K grows the
+   invariant tori of the integrable limit are destroyed one by one, in the
+   order of their rotation numbers, until K_c = 0.97163540... (the value at
+   which the golden-mean torus, 0.6180339887..., finally breaks - Greene's
+   residue criterion, made rigorous numerically by MacKay).
+
+   TWO MEASURABLE INVARIANTS DRIVE THE PICTURE
+   1. rho, the rotation number.  For an orbit on a torus the mean drift of q,
+      rho = lim (q_n - q_0)/n, exists and is constant on that torus.  Chaos has
+      no such invariant, so a *windowed* estimate of rho wanders instead of
+      settling.  rho is mapped to hue: each torus becomes its own colour.
+   2. chaos: the wander of that windowed estimate, i.e. how little invariant the
+      motion actually is.  It sets the brightness, so the invariant curves burn
+      and the chaotic sea stays a faint mist.  The picture is a live measurement
+      of the KAM theorem rather than an illustration of it.
+   =========================================================================== */
+
+var TAU = 6.283185307179586;
+
+/* --- palette: a cyclic jewel wheel, hue <- rotation number ----------------- */
+var PSTOP = [
+  [0.00, 1.00, 0.18, 0.24], [0.09, 1.00, 0.42, 0.06], [0.18, 1.00, 0.72, 0.06],
+  [0.27, 0.85, 1.00, 0.16], [0.36, 0.24, 0.95, 0.38], [0.45, 0.10, 0.92, 0.86],
+  [0.55, 0.14, 0.58, 1.00], [0.65, 0.30, 0.30, 1.00], [0.74, 0.62, 0.22, 1.00],
+  [0.83, 0.95, 0.24, 0.85], [0.92, 1.00, 0.20, 0.52], [1.00, 1.00, 0.18, 0.24]
+];
+var PALSZ = 256, PAL = new Float32Array(PALSZ * 3);
+(function () {
+  for (var i = 0; i < PALSZ; i++) {
+    var u = (i + 0.5) / PALSZ, c, p;
+    for (p = 0; p < PSTOP.length - 1; p++) {
+      if (u >= PSTOP[p][0] && u <= PSTOP[p + 1][0]) {
+        var a = PSTOP[p][0], b = PSTOP[p + 1][0];
+        var t = (b - a) > 1e-9 ? (u - a) / (b - a) : 0;
+        for (c = 0; c < 3; c++) {
+          PAL[i * 3 + c] = PSTOP[p][1 + c] * (1 - t) + PSTOP[p + 1][1 + c] * t;
+        }
+        break;
+      }
+    }
+  }
+})();
+
+/* --- tuning --------------------------------------------------------------- */
+var WIN       = 32;        // steps per rotation-number window
+var CSCALE    = 0.030;     // wander of the windowed rho that counts as chaos
+var FLOOR     = 0.015;     // chaotic orbits still leave a faint mist
+var ORDER_LO  = 0.10, ORDER_HI = 0.60;
+var SEA       = [0.10, 0.22, 1.00];
+var DEP       = 0.090;     // deposit per orbit per step
+var FADE_STILL = 0.9966;   /* ~290 frame memory once the parameters settle */
+var FADE_MOVE  = 0.9720;   /* short memory while they are being dialled */
+var WHITE = 1.50, SPAN = 3.50;              // white-hot cores
+var GAMMA = 1.45, BLACK = 0.05, CONTRAST = 0.30;
+var TARGET_M = 0.115;      /* auto-exposure: median of max(r,g,b) in the buffer */
+var BTHR = 0.35, BAMT = 0.55;               // bloom threshold / strength
+var KC = 0.97163540;       // golden-mean critical K (Greene / MacKay)
+
+/* --- the orbits ----------------------------------------------------------- */
+var GX = 300, GY = 300, NP = GX * GY;      /* 90000 orbits in the ensemble */
+var Q  = new Float32Array(NP), P  = new Float32Array(NP);
+var WS = new Float32Array(NP), WC = new Int32Array(NP);
+var RHO = new Float32Array(NP), CH = new Float32Array(NP);
+var CR = new Float32Array(NP), CG = new Float32Array(NP), CB = new Float32Array(NP);
+var DITH = new Float32Array(2048 * 2);     /* sub-pixel dither (stochastic AA) */
+var LIVE = 0, burnDone = 0, frameNo = 0;
+var NPRE = 128;                            /* burn-in steps for a fresh orbit */
+var BURN_BUDGET = 320000;                  /* steps per frame while filling up */
+var MK = 1.0 / TAU;                        /* K/2pi */
+var K = 1.0, eps = 0.0;                    /* the map, as it is now */
+var kTgt = 1.0, eTgt = 0.0;                /* where it is heading */
+var kUser = 1.0, eUser = 0.0;              /* what the pointer asked for */
+var view = { z: 1.0, q0: 0.0, p0: 0.0 };
+
+/* --- canvases and buffers ------------------------------------------------- */
+var cv = document.getElementById('view');
+var ctx = cv.getContext('2d', { alpha: false });
+var cw = 0, ch = 0, dpr = 1;
+var bw = 0, bh = 0, bn3 = 0, BUF = null, BID = null;
+var bufCv = null, bufCtx = null;
+var bw4 = 0, bh4 = 0, bloomD = null, bid = null, bloomCv = null, bloomCtx = null;
+var vig = null, LUT = new Uint8Array(1024);
+var RES = 0.68, MAXW = 820;
+
+/* the display curve: hue-preserving rolloff, then gamma, contrast, sRGB */
+(function () {
+  for (var i = 0; i < 1024; i++) {
+    var v = i / 1023, o;
+    o = Math.pow(v, 1 / GAMMA);
+    o = (o - BLACK) / (1 - BLACK); if (o < 0) o = 0; else if (o > 1) o = 1;
+    o = Math.pow(o, 1 + CONTRAST);
+    LUT[i] = (Math.pow(o, 1 / 2.2) * 255 + 0.5) | 0;
+  }
+})();
+
+function makeVignette(dside, dx, dy) {
+  var g = ctx.createRadialGradient(dx + dside * 0.5, dy + dside * 0.47, dside * 0.34,
+                                   dx + dside * 0.5, dy + dside * 0.50, dside * 0.96);
+  g.addColorStop(0.00, 'rgba(3,5,12,0)');
+  g.addColorStop(0.58, 'rgba(3,5,12,0.10)');
+  g.addColorStop(1.00, 'rgba(2,3,9,0.80)');
+  return g;
+}
+
+/* the torus is a square, and it is shown as one: the picture never depends on
+   the shape of the window, and the buffer stays square whatever the screen. */
+var dside = 0, dx0 = 0, dy0 = 0;
+function resize() {
+  dpr = Math.min(1.5, window.devicePixelRatio || 1);
+  cw = Math.max(2, Math.round(cv.clientWidth * dpr));
+  ch = Math.max(2, Math.round(cv.clientHeight * dpr));
+  cv.width = cw; cv.height = ch;
+  dside = Math.max(16, Math.round(Math.min(cw, ch) * 0.985));
+  dx0 = Math.round((cw - dside) / 2); dy0 = Math.round((ch - dside) / 2);
+  var csside = Math.min(cv.clientWidth, cv.clientHeight);
+  bw = bh = Math.max(32, Math.min(MAXW, Math.round(csside * RES)));
+  bn3 = bw * bh * 3;
+  BUF = new Float32Array(bn3);
+  bufCv = document.createElement('canvas');
+  bufCv.width = bw; bufCv.height = bh;
+  bufCtx = bufCv.getContext('2d');
+  BID = bufCtx.createImageData(bw, bh);
+  for (var ai = 3; ai < BID.data.length; ai += 4) BID.data[ai] = 255;
+  bw4 = Math.max(2, bw >> 2); bh4 = Math.max(2, bh >> 2);
+  bloomD = new Float32Array(bw4 * bh4 * 3);
+  bloomCv = document.createElement('canvas');
+  bloomCv.width = bw4; bloomCv.height = bh4;
+  bloomCtx = bloomCv.getContext('2d');
+  bid = bloomCtx.createImageData(bw4, bh4);
+  vig = makeVignette(dside, dx0, dy0);
+  SCR = new Float32Array(bn3);
+  seed();
+}
+
+/* a fresh set of orbits, sampled at random from the uniform measure over the
+   visible rectangle.  The map preserves that measure exactly (det J = 1), so the
+   ensemble stays a fair sample of phase space - and unlike a lattice of initial
+   conditions it leaves no imprint of its own on the picture. */
+function seed() {
+  var w = 1.0 / view.z, i, d;
+  for (i = 0; i < NP; i++) {
+    Q[i] = view.q0 + w * Math.random();
+    P[i] = view.p0 + w * Math.random() - 0.5;   /* the view is in p+1/2 */
+    Q[i] -= Math.floor(Q[i]); P[i] -= Math.floor(P[i]);
+    WS[i] = 0; WC[i] = 0; RHO[i] = 0.5; CH[i] = 0;
+    CR[i] = SEA[0] * FLOOR * DEP; CG[i] = SEA[1] * FLOOR * DEP;
+    CB[i] = SEA[2] * FLOOR * DEP;
+  }
+  for (d = 0; d < 4096; d++) DITH[d] = Math.random() - 0.5;
+  LIVE = 0; burnDone = 0;
+  if (BUF) BUF.fill(0);
+}
+
+/* colour + weight of one orbit, from its two measured quantities */
+function paint(i) {
+  var c = CH[i] / CSCALE, ord = 1.0 / (1.0 + c * c);
+  var mix = (ord - ORDER_LO) / (ORDER_HI - ORDER_LO);
+  if (mix < 0) mix = 0; else if (mix > 1) mix = 1;
+  var pi = (RHO[i] * PALSZ) | 0;
+  if (pi < 0) pi = 0; else if (pi >= PALSZ) pi = PALSZ - 1;
+  var amt = (FLOOR + (1 - FLOOR) * ord) * DEP;
+  CR[i] = (SEA[0] * (1 - mix) + PAL[pi * 3]     * mix) * amt;
+  CG[i] = (SEA[1] * (1 - mix) + PAL[pi * 3 + 1] * mix) * amt;
+  CB[i] = (SEA[2] * (1 - mix) + PAL[pi * 3 + 2] * mix) * amt;
+}
+
+/* burn in orbits a slice at a time so the picture is born over a few frames */
+function burn() {
+  var steps = 0, i, q, p, k, f, dqc, rn, d, ws = 0, wc = 0, rho, ch;
+  while (burnDone < NP && steps < BURN_BUDGET) {
+    i = burnDone;
+    q = Q[i]; p = P[i]; ws = 0; wc = 0; rho = RHO[i]; ch = CH[i];
+    for (k = 0; k < NPRE; k++) {
+      f = MK * (Math.sin(TAU * q) + eps * Math.sin(2 * TAU * q));
+      p += f; p -= Math.floor(p);
+      dqc = p - 0.5;
+      q += p; q -= Math.floor(q);
+      ws += dqc;
+      if (++wc >= WIN) {
+        rn = ws / WIN; rn -= Math.floor(rn);
+        d = rn - rho; d -= Math.round(d);
+        ch = ch * 0.3 + Math.abs(d) * 0.7;
+        rho = rn; ws = 0; wc = 0;
+      }
+    }
+    Q[i] = q; P[i] = p; WS[i] = 0; WC[i] = 0; RHO[i] = rho; CH[i] = ch;
+    paint(i);
+    LIVE++; burnDone++;
+    steps += NPRE;
+  }
+}
+
+/* one step of every live orbit, and one deposit each */
+function stepAll() {
+  var i, q, p, f, dqc, x, y, j, ws, wc, rn, d, di, pd;
+  var z = view.z, x0 = view.q0, y0 = view.p0, sx = bw * z, mK = MK, ep = eps;
+  var dbase = (frameNo * 131) & 2047;
+  for (i = 0; i < LIVE; i++) {
+    q = Q[i]; p = P[i];
+    f = mK * (Math.sin(TAU * q) + ep * Math.sin(2 * TAU * q));
+    p += f; p -= Math.floor(p);
+    dqc = p - 0.5;                       /* centred lift of dq, for rho only */
+    q += p; q -= Math.floor(q);          /* the map: q' = q + p' */
+    Q[i] = q; P[i] = p;
+    ws = WS[i] + dqc; wc = WC[i] + 1;
+    if (wc >= WIN) {
+      rn = ws / WIN; rn -= Math.floor(rn);
+      d = rn - RHO[i]; d -= Math.round(d);
+      CH[i] = CH[i] * 0.3 + Math.abs(d) * 0.7;
+      RHO[i] = rn;
+      paint(i);
+      ws = 0; wc = 0;
+    }
+    WS[i] = ws; WC[i] = wc;
+    di = ((i * 7919 + dbase) & 2047) << 1;
+    x = (q - x0) * sx + DITH[di];
+    if (x < 0 || x >= bw) continue;
+    pd = p + 0.5; if (pd >= 1) pd -= 1;      /* display coordinate */
+    y = (1.0 - (pd - y0) * z) * bh + DITH[di + 1];
+    if (y < 0 || y >= bh) continue;
+    j = (((y | 0) * bw) + (x | 0)) * 3;
+    BUF[j] += CR[i]; BUF[j + 1] += CG[i]; BUF[j + 2] += CB[i];
+  }
+}
+
+/* --- auto-exposure: keep the median of the buffer at a fixed level --------- */
+var HIST = new Int32Array(256), exGain = 0.30, exTick = 0;
+function autoExpose() {
+  var i, p, r, g, b, m, k, cnt = 0, acc = 0, med, want, half;
+  var step = Math.max(1, ((bw * bh) / 5000) | 0), n = bw * bh;
+  for (k = 0; k < 256; k++) HIST[k] = 0;
+  for (i = 0; i < n; i += step) {
+    p = i * 3; r = BUF[p]; g = BUF[p + 1]; b = BUF[p + 2];
+    m = r > g ? r : g; if (b > m) m = b;
+    m *= exGain;
+    k = (m * 64) | 0;
+    if (k < 0) k = 0; else if (k > 255) k = 255;
+    HIST[k]++; cnt++;
+  }
+  if (cnt < 8) return;
+  half = cnt * 0.5;
+  for (k = 0, acc = 0; k < 255; k++) { acc += HIST[k]; if (acc >= half) break; }
+  med = (k + 0.5) / 64;
+  if (med < 0.004) med = 0.004;
+  want = TARGET_M / med;
+  if (want > 2.2) want = 2.2; else if (want < 0.45) want = 0.45;
+  exGain *= 1 + (want - 1) * 0.35;
+  if (exGain > 1e5) exGain = 1e5; else if (exGain < 1e-4) exGain = 1e-4;
+}
+
+/* --- panning: slide the accumulated picture with the view ------------------ */
+var SCR = null;
+function shiftBuffer(dx, dy) {
+  dx = Math.round(dx); dy = Math.round(dy);
+  if (!dx && !dy) return;
+  SCR.fill(0);
+  var wy = bh - Math.abs(dy), wx = bw - Math.abs(dx), y, o, so, ox, oy, sx, sy2;
+  if (wy > 0 && wx > 0) {
+    ox = dx > 0 ? dx : 0; sx = dx < 0 ? -dx : 0;
+    oy = dy > 0 ? dy : 0; sy2 = dy < 0 ? -dy : 0;
+    for (y = 0; y < wy; y++) {
+      o = ((y + oy) * bw + ox) * 3;
+      so = ((y + sy2) * bw + sx) * 3;
+      SCR.set(BUF.subarray(so, so + wx * 3), o);
+    }
+  }
+  BUF.set(SCR);
+}
+
+/* --- the display chain ---------------------------------------------------- */
+function present(fade) {
+  var i, x, y, o, r, g, b, m, t, s, w, bi, k3, by, gain = exGain, src = BUF;
+  for (i = 0; i < bn3; i++) src[i] *= fade;
+  for (k3 = 0; k3 < bw4 * bh4 * 3; k3++) bloomD[k3] = 0;
+  var dst = BID.data, so = 0, dof = 0;
+  for (y = 0; y < bh; y++) {
+    by = (y >> 2) * bw4;
+    for (x = 0; x < bw; x++, so += 3, dof += 4) {
+      r = src[so] * gain; g = src[so + 1] * gain; b = src[so + 2] * gain;
+      m = r > g ? r : g; if (b > m) m = b;
+      if (m > 1e-9) { t = m / (1 + m); s = t / m; } else { t = 0; s = 0; }
+      r *= s; g *= s; b *= s;
+      if (m > WHITE) {                        /* overexposed cores go white */
+        w = (m - WHITE) / SPAN; if (w > 1) w = 1;
+        r += (1 - r) * w; g += (1 - g) * w; b += (1 - b) * w;
+      }
+      if (r > 1) r = 1; else if (r < 0) r = 0;
+      if (g > 1) g = 1; else if (g < 0) g = 0;
+      if (b > 1) b = 1; else if (b < 0) b = 0;
+      dst[dof] = LUT[(r * 1023) | 0];
+      dst[dof + 1] = LUT[(g * 1023) | 0];
+      dst[dof + 2] = LUT[(b * 1023) | 0];
+      if (m > BTHR) {                         /* bright pass for the bloom */
+        w = (m - BTHR) / (1 - BTHR); if (w > 1) w = 1;
+        bi = (by + (x >> 2)) * 3;
+        bloomD[bi] += r * w; bloomD[bi + 1] += g * w; bloomD[bi + 2] += b * w;
+      }
+    }
+  }
+  var bdst = bid.data, br, bg, bb, div = 1 / 16, bo;
+  for (i = 0, k3 = 0; i < bw4 * bh4; i++, k3 += 3) {
+    br = bloomD[k3] * div * BAMT; bg = bloomD[k3 + 1] * div * BAMT;
+    bb = bloomD[k3 + 2] * div * BAMT;
+    bo = i << 2;
+    bdst[bo] = br > 1 ? 255 : (br * 255) | 0;
+    bdst[bo + 1] = bg > 1 ? 255 : (bg * 255) | 0;
+    bdst[bo + 2] = bb > 1 ? 255 : (bb * 255) | 0;
+    bdst[bo + 3] = 255;
+  }
+  bufCtx.putImageData(BID, 0, 0);
+  bloomCtx.putImageData(bid, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.imageSmoothingEnabled = true;
+  ctx.fillStyle = '#03040a';
+  ctx.fillRect(0, 0, cw, ch);
+  ctx.drawImage(bufCv, 0, 0, bw, bh, dx0, dy0, dside, dside);
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.95;
+  ctx.drawImage(bloomCv, 0, 0, bw4, bh4, dx0, dy0, dside, dside);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  if (vig) { ctx.fillStyle = vig; ctx.fillRect(0, 0, cw, ch); }
+}
+
+/* --- interaction ---------------------------------------------------------- */
+var lastInput = -1e9, idlePhase = 0, mv = 0;
+var panning = false, lastPX = 0, lastPY = 0;
+var downT = 0, downX = 0, downY = 0, isTouch = false;
+var needsSeed = false, seedAt = 0, flush = 0;
+var armed = false, seen = false, firstX = 0, firstY = 0;
+
+function nowMs() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+function clampf(v, a, b) { return v < a ? a : (v > b ? b : v); }
+function clampView() {
+  var w = 1 / view.z;
+  view.q0 = clampf(view.q0, 0, Math.max(0, 1 - w));
+  view.p0 = clampf(view.p0, 0, Math.max(0, 1 - w));
+}
+function setParams(nx, ny) {
+  kUser = clampf(0.06 + 1.95 * Math.pow(clampf(nx, 0, 1), 1.3), 0.05, 2.05);
+  eUser = (clampf(ny, 0, 1) - 0.5) * 0.70;
+  lastInput = nowMs();
+}
+function panBy(dxc, dyc) {
+  var k = bw / Math.max(1, cv.clientWidth);
+  var sbx = dxc * k, sby = dyc * k;
+  shiftBuffer(sbx, sby);
+  view.q0 -= sbx / (view.z * bw);
+  view.p0 += sby / (view.z * bh);
+  clampView();
+  lastInput = nowMs();
+}
+function scheduleSeed(delay) { needsSeed = true; seedAt = nowMs() + delay; }
+
+cv.addEventListener('pointerdown', function (e) {
+  panning = true; isTouch = (e.pointerType === 'touch');
+  lastPX = e.clientX; lastPY = e.clientY;
+  downT = nowMs(); downX = e.clientX; downY = e.clientY;
+  if (cv.setPointerCapture) { try { cv.setPointerCapture(e.pointerId); } catch (err) {} }
+});
+cv.addEventListener('pointermove', function (e) {
+  if (panning) {
+    panBy(e.clientX - lastPX, e.clientY - lastPY);
+    lastPX = e.clientX; lastPY = e.clientY;
+  } else {
+    /* the pointer only takes over the parameters once it has really moved, so
+       that wherever the cursor happens to be resting, the page opens on its
+       own default state */
+    if (!seen) { seen = true; firstX = e.clientX; firstY = e.clientY; return; }
+    if (!armed) {
+      if (Math.abs(e.clientX - firstX) + Math.abs(e.clientY - firstY) < 18) return;
+      armed = true;
+    }
+    setParams(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+  }
+}, { passive: true });
+function endPointer(e) {
+  if (!panning) return;
+  panning = false;
+  if (isTouch && nowMs() - downT < 340 &&
+      Math.abs(e.clientX - downX) < 9 && Math.abs(e.clientY - downY) < 9) {
+    setParams(e.clientX / window.innerWidth, e.clientY / window.innerHeight);
+  }
+  if (view.z > 1.02) scheduleSeed(420);
+}
+cv.addEventListener('pointerup', endPointer);
+cv.addEventListener('pointercancel', function (e) { panning = false; });
+
+cv.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  var f = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016));
+  var nz = clampf(view.z * f, 1, 26);
+  if (Math.abs(nz - view.z) < 1e-4) return;
+  var nx = clampf(e.clientX / Math.max(1, cv.clientWidth), 0, 1);
+  var ny = clampf(e.clientY / Math.max(1, cv.clientHeight), 0, 1);
+  var qAt = view.q0 + nx / view.z, pAt = view.p0 + (1 - ny) / view.z;
+  view.q0 = qAt - nx / nz;
+  view.p0 = pAt - (1 - ny) / nz;
+  view.z = nz;
+  clampView();
+  flush = 12;
+  scheduleSeed(360);
+  lastInput = nowMs();
+}, { passive: false });
+
+cv.addEventListener('dblclick', function () {
+  view.z = 1; view.q0 = 0; view.p0 = 0;
+  flush = 12; scheduleSeed(60); exGain = 0.30;
+  lastInput = nowMs();
+});
+
+var rsz = 0;
+window.addEventListener('resize', function () {
+  clearTimeout(rsz);
+  rsz = setTimeout(function () {
+    resize();
+    flush = 8;
+    if (view.z > 1.02) scheduleSeed(300);
+  }, 140);
+});
+
+/* --- HUD ------------------------------------------------------------------ */
+var elK = document.getElementById('rk'), elE = document.getElementById('re'),
+    elZ = document.getElementById('rz'), elO = document.getElementById('ro'),
+    elKM = document.getElementById('km'), elKC = document.getElementById('kc');
+elKC.style.left = (KC / 2.1 * 100).toFixed(2) + '%';
+var invPct = 0, hudTick = 0;
+function hud() {
+  elK.textContent = K.toFixed(4);
+  elE.textContent = (eps >= 0 ? '+' : '') + eps.toFixed(3);
+  elZ.textContent = view.z.toFixed(view.z < 10 ? 1 : 0) + '\u00d7';
+  elO.textContent = invPct.toFixed(0) + '%';
+  elKM.style.left = clampf(K / 2.1 * 100, 0, 100).toFixed(2) + '%';
+}
+function sampleInvariant() {
+  var i, c = 0, n = 0, lim = Math.min(LIVE, actN);
+  for (i = 0; i < lim; i += 41) { if (CH[i] < CSCALE) c++; n++; }
+  invPct = n ? (100 * c / n) : 0;
+}
+
+/* --- the loop ------------------------------------------------------------- */
+var actN = NP, ftEMA = 16, lastT = 0;
+function frame(ts) {
+  var t0 = nowMs();
+  var dt = lastT ? Math.min(0.06, (ts - lastT) / 1000) : 0.016;
+  lastT = ts;
+  idlePhase += dt;
+  frameNo++;
+
+  if (nowMs() - lastInput > 2200) {
+    kTgt = kUser + 0.052 * Math.sin(idlePhase * 0.131) + 0.026 * Math.sin(idlePhase * 0.049 + 1.7);
+    eTgt = eUser + 0.028 * Math.sin(idlePhase * 0.093 + 2.4);
+    mv += (0.22 - mv) * Math.min(1, dt * 1.1);
+  } else {
+    kTgt = kUser; eTgt = eUser;
+    mv += (1.0 - mv) * Math.min(1, dt * 2.6);
+  }
+  K += (kTgt - K) * Math.min(1, dt * 3.4);
+  eps += (eTgt - eps) * Math.min(1, dt * 3.4);
+  MK = K / TAU;
+
+  if (needsSeed && nowMs() >= seedAt) { needsSeed = false; seed(); }
+
+  if (burnDone < actN) burn();
+  stepAll();
+  if (flush > 0) flush--;
+  var fade = flush > 0 ? 0.80 : FADE_STILL * Math.pow(FADE_MOVE / FADE_STILL, mv);
+  present(fade);
+
+  if ((hudTick = (hudTick + 1) % 9) === 0) { autoExpose(); }
+  if ((hudTick % 45) === 0) { sampleInvariant(); }
+  hud();
+
+  var spent = nowMs() - t0;
+  ftEMA = ftEMA * 0.88 + spent * 0.12;
+  if (ftEMA > 30 && actN > NP * 0.30) { actN = Math.max(NP * 0.30, actN - NP * 0.05); }
+  else if (ftEMA < 15 && actN < NP) { actN = Math.min(NP, actN + NP * 0.04); }
+  requestAnimationFrame(frame);
+}
+
+resize();
+hud();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

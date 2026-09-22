@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>The Coxeter Bloom &middot; E&#8328;</title>
+<meta name="description" content="The 240 roots of the E8 root system in R^8, seen through a moving 2-plane. The Coxeter plane blooms into eight concentric 30-gons.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23e8c37a' stroke-width='2.4' stroke-dasharray='2.3 2.3'/%3E%3C/svg%3E">
+<style>
+  html, body { height: 100%; margin: 0; background: #05060f; overflow: hidden; }
+  body {
+    font-family: 'Palatino Linotype', 'Book Antiqua', Palatino, 'URW Palladio L', Georgia, 'Times New Roman', serif;
+    color: #c9d2e4; -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+  #stage { position: fixed; inset: 0; display: block; cursor: crosshair; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; user-select: none; -webkit-user-select: none; z-index: 2; }
+  #head { top: 26px; left: 32px; max-width: 72vw; }
+  #head h1 {
+    margin: 0; font-size: 15px; font-weight: 400; letter-spacing: .46em;
+    color: #e9e0cb; text-shadow: 0 0 22px rgba(232,195,122,.35);
+  }
+  #head .sub { margin-top: 8px; font-size: 12px; font-style: italic; letter-spacing: .12em; opacity: .58; }
+  #exps {
+    margin-top: 12px; font: 10px/1.8 'Cascadia Mono', 'SF Mono', Consolas, Menlo, monospace;
+    letter-spacing: .14em; opacity: .32;
+  }
+  #readout {
+    bottom: 24px; left: 32px; font: 10.5px/1.9 'Cascadia Mono', 'SF Mono', Consolas, Menlo, monospace;
+    letter-spacing: .1em; opacity: .66; white-space: pre;
+  }
+  #resline { display: flex; align-items: center; gap: 10px; margin-top: 7px; }
+  #reslabel { letter-spacing: .22em; opacity: .8; }
+  #resbar { width: 130px; height: 3px; background: rgba(201,210,228,.14); border-radius: 2px; overflow: hidden; }
+  #resfill {
+    height: 100%; width: 0%; border-radius: 2px;
+    background: linear-gradient(90deg, #7fd7c4, #e8c37a); transition: width .18s linear;
+  }
+  #respct { min-width: 4.5em; }
+  #hints {
+    bottom: 24px; right: 32px; text-align: right; font-size: 10px;
+    letter-spacing: .24em; text-transform: uppercase; opacity: .4; line-height: 2.2;
+  }
+  #hints b { color: #e8c37a; font-weight: 400; }
+  #aboutBtn {
+    position: fixed; top: 24px; right: 28px; z-index: 3; pointer-events: auto; cursor: pointer;
+    font: 11px/1 'Cascadia Mono', 'SF Mono', Consolas, monospace; letter-spacing: .22em;
+    color: #e8c37a; background: rgba(10,12,24,.62); border: 1px solid rgba(232,195,122,.35);
+    border-radius: 999px; padding: 9px 16px 9px 18px;
+    backdrop-filter: blur(6px);
+  }
+  #aboutBtn:hover, #aboutBtn:focus { background: rgba(232,195,122,.12); outline: none; }
+  #about {
+    position: fixed; top: 66px; right: 28px; z-index: 3; width: 372px;
+    max-width: calc(100vw - 48px); max-height: min(74vh, 600px); overflow: auto;
+    pointer-events: auto; display: none;
+    background: rgba(8,10,20,.88); border: 1px solid rgba(232,195,122,.22);
+    border-radius: 10px; padding: 20px 22px 14px; font-size: 12.5px; line-height: 1.78;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 18px 60px rgba(0,0,0,.55);
+  }
+  #about.open { display: block; }
+  #about h2 {
+    margin: 0 0 12px; font-size: 11px; font-weight: 400;
+    letter-spacing: .32em; color: #e8c37a;
+  }
+  #about p { margin: 0 0 12px; opacity: .86; }
+  #about .f {
+    font-family: 'Cascadia Mono', 'SF Mono', Consolas, monospace; font-size: 10.5px;
+    color: #9fb6d8; background: rgba(159,182,216,.07); border-radius: 6px;
+    padding: 8px 10px; margin: 0 0 12px; letter-spacing: .04em; line-height: 1.7;
+  }
+  #about em { color: #e8c37a; font-style: normal; }
+  #about .keys { font-size: 10px; letter-spacing: .2em; text-transform: uppercase; opacity: .45; }
+  noscript div {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #c9d2e4; font-size: 14px; letter-spacing: .1em;
+  }
+  @media (max-width: 640px) {
+    #head { left: 20px; top: 20px; }
+    #hints { display: none; }
+    #readout { left: 20px; bottom: 16px; }
+    #aboutBtn { top: 16px; right: 16px; }
+    #about { right: 16px; top: 56px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<noscript><div>This bloom is drawn with JavaScript &mdash; please enable it.</div></noscript>
+
+<div class="hud" id="head">
+  <h1>THE COXETER BLOOM</h1>
+  <div class="sub">the E&#8328; root system, seen through a moving plane in &#8477;&#8311;</div>
+  <div id="exps">&#934;(E&#8328;) &middot; 240 roots &middot; w has order h = 30 &middot; exponents 1&middot;7&middot;11&middot;13&middot;17&middot;19&middot;23&middot;29</div>
+</div>
+
+<div class="hud" id="readout"><span id="philine">&#966; 0.000 &tau; &nbsp;0.000 &tau; &nbsp;0.000 &tau; &nbsp;0.000 &tau; &nbsp;&middot;&nbsp; zoom 1.00</span>
+<div id="resline"><span id="reslabel">RESONANCE</span><span id="resbar"><span id="resfill" style="display:block"></span></span><span id="respct">100%</span></div>
+</div>
+
+<div class="hud" id="hints">
+  <b>move</b> &mdash; stir the torus<br>
+  <b>scroll</b> &mdash; dilate<br>
+  <b>click</b> &mdash; palette
+</div>
+
+<button id="aboutBtn" type="button" aria-expanded="false" aria-controls="about">&#8477;&#8311; ?</button>
+<aside id="about" role="dialog" aria-label="The mathematics">
+  <h2>THE MATHEMATICS</h2>
+  <p>Every point of light is a <em>root</em> of E&#8328;: one of 240 vectors in &#8477;&#8311; that build the largest exceptional Lie group, its 4&#8322;&#8321; polytope and its Weyl group of 696,729,600 symmetries.</p>
+  <div class="f">&#934;(E&#8328;) = permutations of (&plusmn;1, &plusmn;1, 0&#8310;) &nbsp;&cup;&nbsp; &frac12;(&plusmn;1)&#8311; with an even number of minus signs</div>
+  <p>The <em>Coxeter element</em> w is the product of the eight simple reflections. For E&#8328; its order is the Coxeter number h&nbsp;=&nbsp;30, and its eigenvalues are exp(2&pi;im/30) for the exponents m&nbsp;=&nbsp;1,&nbsp;7,&nbsp;11,&nbsp;13,&nbsp;17,&nbsp;19,&nbsp;23,&nbsp;29.</p>
+  <p>This page watches &#8477;&#8311; through a single moving 2-plane. When that plane is the <em>Coxeter plane</em> &mdash; the eigenplane of exp(2&pi;i/30) &mdash; w spins it by 2&pi;/30, so the orbit of every root lands on a perfect regular 30-gon: 240&nbsp;=&nbsp;8&nbsp;&times;&nbsp;30 concentric rings. That is the bloom at rest.</p>
+  <p>Your pointer steers the viewing plane through the maximal torus T&#8308;&nbsp;&subset;&nbsp;SO(8): four simultaneous rotations in four orthogonal coordinate planes. A generic plane breaks the symmetry into eight-dimensional epicycles; only the Coxeter plane restores all thirty arms at once.</p>
+  <p>The <em>resonance</em> gauge measures the mean squared gap between each root&rsquo;s image w&middot;&alpha; and the in-plane rotation of &alpha; by 2&pi;/30. It reads 100% <em>if and only if</em> the plane you are looking through is the Coxeter plane. Stir, wander &mdash; then find your way back.</p>
+  <p class="keys">move &mdash; stir &middot; scroll &mdash; dilate &middot; click &mdash; palette &middot; esc &mdash; close</p>
+</aside>
+
+<script>
+'use strict';
+(function () {
+// ---- constants injected from e8_constants.json (see e8_oracle.py) ----
+var U0 = [0.3136884722928613,-0.08942415464190843,-0.1466522699541573,0.3065400156755071,0.18084609809381935,0.25003814730465546,0.07785770886792502,0.8227046762299562];
+var V0 = [0.2859074953332666,-0.3662917213950483,0.3982921857813232,0.047779362726073485,0.7407666177401977,-0.18365885114882263,-0.019007690840932352,-0.20084993980102364];
+var SIGMA = new Int16Array([137,160,191,214,161,136,215,190,68,77,78,71,129,168,183,222,106,52,55,105,169,128,223,182,84,61,62,87,3,94,93,0,125,203,148,226,46,15,12,45,143,185,166,208,39,22,21,36,123,205,146,228,149,227,124,202,38,23,20,37,167,209,142,184,47,14,13,44,147,229,122,204,117,156,195,234,86,60,63,85,157,116,235,194,104,53,54,107,135,177,174,216,1,92,95,2,115,197,154,236,175,134,217,176,70,79,76,69,155,237,114,196,50,151,127,24,31,163,139,5,159,110,98,158,171,67,59,170,42,145,121,16,34,211,187,8,153,101,90,152,219,81,73,218,119,96,108,118,131,58,66,130,26,150,126,48,7,162,138,29,113,88,100,112,179,72,80,178,18,144,120,40,10,210,186,32,35,165,141,9,43,231,207,17,173,83,75,172,239,103,91,238,30,213,189,4,51,225,201,25,221,65,57,220,233,111,99,232,133,74,82,132,199,89,102,198,11,164,140,33,19,230,206,41,181,56,64,180,193,97,109,192,6,212,188,28,27,224,200,49]);
+var RING = new Int16Array([0,5,5,0,4,2,2,4,4,0,0,4,7,2,2,7,3,2,2,3,2,1,1,2,7,4,4,7,0,5,5,0,1,3,3,1,1,7,7,1,3,1,1,3,1,1,1,1,6,6,6,6,2,3,3,2,7,2,2,7,0,4,4,0,1,2,2,1,4,7,7,4,6,4,4,6,3,0,0,3,1,0,0,1,7,3,3,7,4,6,6,4,5,5,5,5,7,7,7,7,1,0,0,1,7,3,3,7,6,5,5,6,6,5,5,7,0,6,4,2,5,5,7,6,3,1,7,5,1,7,5,3,3,3,0,4,2,0,6,4,3,0,4,3,2,7,6,4,3,2,2,5,4,2,7,6,4,1,6,5,5,4,1,6,0,6,1,0,2,2,5,3,0,0,6,1,1,6,0,0,3,5,2,2,0,1,6,0,6,1,4,5,5,6,1,4,6,7,2,4,5,2,2,3,4,6,7,2,3,4,0,3,4,6,0,2,4,0,3,3,3,5,7,1,5,7,1,3,6,7,5,5,2,4,6,0,7,5,5,6]);
+var MAXR = 1.1395719265420343;
+var RES_SCALE2 = 0.4299958574422868;
+var SIGN = -1.0;
+var THETA = 0.20943951023931953;
+var CHECK = { px0: 0.22426431765095284, py0: -0.0803842260617817, px119: 0.47364728356202673, py119: -0.014218593248097957, px239: -0.8577993469343294, py239: -0.35146872919751704 };
+
+// ---------------------------------------------------------------- self-test
+// Runs (after the roots are built) on every load: the embedded oracle
+// constants must reproduce the oracle's projections exactly, or the page
+// refuses to run.
+function selfTest() {
+  if (!U0 || !V0 || U0.length !== 8 || V0.length !== 8) throw new Error('Coxeter plane basis missing');
+  if (SIGMA.length !== 240 || RING.length !== 240) throw new Error('orbit tables truncated');
+  var seen = new Int32Array(240);
+  for (var i = 0; i < 240; i++) seen[SIGMA[i]]++;
+  for (var j = 0; j < 240; j++) if (seen[j] !== 1) throw new Error('SIGMA is not a permutation');
+  var px = projectAt(U0, V0).x, py = projectAt(U0, V0).y;
+  var chk = [[0, 'px0', 'py0'], [119, 'px119', 'py119'], [239, 'px239', 'py239']];
+  for (var c = 0; c < chk.length; c++) {
+    var idx = chk[c][0];
+    if (Math.abs(px[idx] - CHECK[chk[c][1]]) > 1e-9) throw new Error('projection mismatch ' + chk[c][1]);
+    if (Math.abs(py[idx] - CHECK[chk[c][2]]) > 1e-9) throw new Error('projection mismatch ' + chk[c][2]);
+  }
+}
+
+// ------------------------------------------------------------------- roots
+// Same construction (and ordering) as the oracle: 112 + 128 = 240.
+var ROOTS = [];
+(function buildRoots() {
+  var signs = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (var i = 0; i < 8; i++)
+    for (var j = i + 1; j < 8; j++)
+      for (var s = 0; s < 4; s++) {
+        var v = new Float64Array(8);
+        v[i] = signs[s][0]; v[j] = signs[s][1];
+        ROOTS.push(v);
+      }
+  for (var bits = 0; bits < 256; bits++) {
+    var minus = 0, w = new Float64Array(8);
+    for (var k = 0; k < 8; k++) {
+      if ((bits >> k) & 1) { w[k] = -0.5; minus++; } else { w[k] = 0.5; }
+    }
+    if (minus % 2 === 0) ROOTS.push(w);
+  }
+  if (ROOTS.length !== 240) throw new Error('root construction produced ' + ROOTS.length);
+})();
+selfTest();
+
+var RING_IDX = [];
+for (var g = 0; g < 8; g++) {
+  var bucket = [];
+  for (var i2 = 0; i2 < 240; i2++) if (RING[i2] === g) bucket.push(i2);
+  RING_IDX.push(bucket);
+}
+
+// ------------------------------------------------------- projection helper
+function projectAt(u, v) {
+  var x = new Float64Array(240), y = new Float64Array(240);
+  for (var i = 0; i < 240; i++) {
+    var a = ROOTS[i], sx = 0, sy = 0;
+    for (var k = 0; k < 8; k++) { sx += a[k] * u[k]; sy += a[k] * v[k]; }
+    x[i] = sx; y[i] = sy;
+  }
+  return { x: x, y: y };
+}
+
+// ------------------------------------------------------------- palettes
+function hsl2rgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  function f(n) {
+    var k = (n + h * 12) % 12;
+    var a = s * Math.min(l, 1 - l);
+    return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  }
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+var PALETTES = [
+  { name: 'nebula',  rings: [[48, .95, .76], [28, .95, .70], [348, .88, .72], [300, .82, .76],
+                             [262, .88, .76], [215, .92, .72], [185, .88, .66], [152, .75, .64]] },
+  { name: 'ember',   rings: [[16, 1, .78], [30, 1, .70], [45, 1, .66], [6, .95, .62],
+                             [350, .90, .62], [320, .80, .64], [275, .75, .66], [245, .80, .70]] },
+  { name: 'glacier', rings: [[52, .55, .88], [175, .85, .74], [195, .90, .70], [208, .92, .68],
+                             [222, .90, .70], [238, .85, .72], [258, .80, .74], [280, .72, .76]] }
+];
+var CHORD_A = 0.105, CHORD2_A = 0.045;
+
+var sprites = [], chordCol = [], chord2Col = [];
+function buildSprites() {
+  sprites = []; chordCol = []; chord2Col = [];
+  for (var p = 0; p < PALETTES.length; p++) {
+    var rings = PALETTES[p].rings, sp = [], cc = [], cc2 = [];
+    for (var g = 0; g < 8; g++) {
+      var rgb = hsl2rgb(rings[g][0], rings[g][1], rings[g][2]);
+      var cv = document.createElement('canvas');
+      cv.width = 128; cv.height = 128;
+      var cx2 = cv.getContext('2d');
+      var grad = cx2.createRadialGradient(64, 64, 0, 64, 64, 64);
+      grad.addColorStop(0.00, 'rgba(255,255,255,0.82)');
+      grad.addColorStop(0.14, 'rgba(' + Math.round(rgb[0] * 0.45 + 255 * 0.55) + ',' +
+                                  Math.round(rgb[1] * 0.45 + 255 * 0.55) + ',' +
+                                  Math.round(rgb[2] * 0.45 + 255 * 0.55) + ',0.50)');
+      grad.addColorStop(0.38, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.26)');
+      grad.addColorStop(0.70, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0.07)');
+      grad.addColorStop(1.00, 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',0)');
+      cx2.fillStyle = grad;
+      cx2.fillRect(0, 0, 128, 128);
+      sp.push(cv);
+      cc.push('rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + CHORD_A + ')');
+      cc2.push('rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',' + CHORD2_A + ')');
+    }
+    sprites.push(sp); chordCol.push(cc); chord2Col.push(cc2);
+  }
+}
+buildSprites();
+
+// ------------------------------------------------------------------- dom
+var canvas = document.getElementById('stage');
+var ctx = canvas.getContext('2d', { alpha: false });
+var elPhi = document.getElementById('philine');
+var elFill = document.getElementById('resfill');
+var elPct = document.getElementById('respct');
+var elBtn = document.getElementById('aboutBtn');
+var elAbout = document.getElementById('about');
+
+// ----------------------------------------------------------------- state
+var TAU = Math.PI * 2;
+var phi = [0, 0, 0, 0];
+var mouse = { x: 0, y: 0, sx: 0, sy: 0 };     // normalized [-1,1]
+var mousePx = { x: 0, y: 0, seen: false };    // css px relative to center
+var zoom = 0.84, zoomT = 1;
+var offX = 0, offY = 0;
+var paletteIdx = 0;
+var W = 0, H = 0, dpr = 1, S = 1;
+var vig = null;
+var lastT = -1;
+var RM = false;
+try { RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
+
+function buildVignette() {
+  vig = document.createElement('canvas');
+  vig.width = 512; vig.height = 320;
+  var vc = vig.getContext('2d');
+  var gr = vc.createRadialGradient(256, 160, 60, 256, 160, 305);
+  gr.addColorStop(0, 'rgba(2,3,9,0)');
+  gr.addColorStop(0.55, 'rgba(2,3,9,0.10)');
+  gr.addColorStop(1, 'rgba(2,3,9,0.58)');
+  vc.fillStyle = gr;
+  vc.fillRect(0, 0, 512, 320);
+}
+buildVignette();
+
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.max(1, Math.round(W * dpr));
+  canvas.height = Math.max(1, Math.round(H * dpr));
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  S = 0.44 * Math.min(W, H) / MAXR;
+  ctx.fillStyle = '#05060f';
+  ctx.fillRect(0, 0, W, H);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------------------------------------------------------------- events
+function setMouse(cx, cy) {
+  mouse.x = Math.max(-1, Math.min(1, (cx / W) * 2 - 1));
+  mouse.y = Math.max(-1, Math.min(1, -((cy / H) * 2 - 1)));
+  mousePx.x = cx - W / 2;
+  mousePx.y = cy - H / 2;
+  mousePx.seen = true;
+}
+if (window.PointerEvent) {
+  canvas.addEventListener('pointermove', function (e) { setMouse(e.clientX, e.clientY); }, { passive: true });
+} else {
+  canvas.addEventListener('mousemove', function (e) { setMouse(e.clientX, e.clientY); }, { passive: true });
+  canvas.addEventListener('touchmove', function (e) {
+    if (e.touches && e.touches.length) { setMouse(e.touches[0].clientX, e.touches[0].clientY); }
+  }, { passive: true });
+}
+canvas.addEventListener('wheel', function (e) {
+  e.preventDefault();
+  var dy = e.deltaY * (e.deltaMode === 1 ? 33 : 1);
+  zoomT = Math.max(0.3, Math.min(7, zoomT * Math.exp(-dy * 0.0011)));
+}, { passive: false });
+canvas.addEventListener('click', function () {
+  paletteIdx = (paletteIdx + 1) % PALETTES.length;
+});
+elBtn.addEventListener('click', function (e) {
+  e.stopPropagation();
+  toggleAbout();
+});
+function toggleAbout() {
+  var open = elAbout.classList.toggle('open');
+  elBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape' && elAbout.classList.contains('open')) toggleAbout();
+  if (e.key === 'a' || e.key === 'A' || e.key === '?') toggleAbout();
+});
+
+// ------------------------------------------------------------- frame loop
+var PX = new Float64Array(240), PY = new Float64Array(240);
+var SXs = new Float64Array(240), SYs = new Float64Array(240);
+var resVal = 1;
+var frameCount = 0;
+var ctR = Math.cos(SIGN * THETA), stR = Math.sin(SIGN * THETA);
+
+function basis(phis) {
+  // rotate the Coxeter-plane basis inside the four orthogonal coordinate
+  // planes: one element of the maximal torus T^4 of SO(8)
+  var u = new Float64Array(8), v = new Float64Array(8);
+  for (var b = 0; b < 4; b++) {
+    var c = Math.cos(phis[b]), s = Math.sin(phis[b]);
+    var u0 = U0[2 * b], u1 = U0[2 * b + 1], v0 = V0[2 * b], v1 = V0[2 * b + 1];
+    u[2 * b] = u0 * c - u1 * s; u[2 * b + 1] = u0 * s + u1 * c;
+    v[2 * b] = v0 * c - v1 * s; v[2 * b + 1] = v0 * s + v1 * c;
+  }
+  return [u, v];
+}
+
+function frame(tms) {
+  requestAnimationFrame(frame);
+  var t = tms * 0.001;
+  if (lastT < 0) lastT = t;
+  var dt = t - lastT;
+  lastT = t;
+  if (!(dt > 0) || dt > 0.05) dt = 0.016;
+
+  var mk = 1 - Math.exp(-dt * 6);
+  mouse.sx += (mouse.x - mouse.sx) * mk;
+  mouse.sy += (mouse.y - mouse.sy) * mk;
+
+  // torus targets: planes 1-2 chase the pointer, planes 3-4 turn on their own
+  var drift = RM ? 0.12 : 1;
+  var tgt = [
+    mouse.sx * 2.1 + Math.sin(t * 0.05) * 0.55,
+    mouse.sy * 2.1 + Math.sin(t * 0.037) * 0.55,
+    t * 0.115 * drift + mouse.sx * 1.35,
+    t * 0.083 * drift + mouse.sy * 1.05
+  ];
+  var k = 1 - Math.exp(-dt * 2.3);
+  for (var i = 0; i < 4; i++) {
+    var d = tgt[i] - phi[i];
+    d = ((d + Math.PI) % TAU + TAU) % TAU - Math.PI;   // chase the short way round
+    phi[i] += d * k;
+  }
+
+  var zPrev = zoom;
+  zoom += (zoomT - zoom) * (1 - Math.exp(-dt * 3.4));
+  if (mousePx.seen && Math.abs(zoom - zPrev) > 1e-7) {
+    var ratio = zoom / zPrev;                          // keep the point under
+    offX = mousePx.x - (mousePx.x - offX) * ratio;     // the cursor fixed
+    offY = mousePx.y - (mousePx.y - offY) * ratio;
+  }
+
+  draw();
+  if ((frameCount++ % 3) === 0) hud();
+}
+
+function draw() {
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = RM ? 'rgba(5,6,15,0.38)' : 'rgba(5,6,15,0.24)';
+  ctx.fillRect(0, 0, W, H);
+
+  var uv = basis(phi);
+  var u = uv[0], v = uv[1];
+  for (var i = 0; i < 240; i++) {
+    var a = ROOTS[i], sx = 0, sy = 0;
+    for (var kk = 0; kk < 8; kk++) { sx += a[kk] * u[kk]; sy += a[kk] * v[kk]; }
+    PX[i] = sx; PY[i] = sy;
+  }
+  var zS = S * zoom;
+  var cxW = W / 2 + offX, cyW = H / 2 + offY;
+  for (i = 0; i < 240; i++) { SXs[i] = cxW + PX[i] * zS; SYs[i] = cyW + PY[i] * zS; }
+
+  // resonance: mean squared gap between p(w a) and the in-plane rotation
+  // of p(a) by 2pi/30 -- exactly zero only at the Coxeter plane
+  var D = 0;
+  for (i = 0; i < 240; i++) {
+    var j = SIGMA[i];
+    var dx = PX[j] - (ctR * PX[i] - stR * PY[i]);
+    var dy = PY[j] - (stR * PX[i] + ctR * PY[i]);
+    D += dx * dx + dy * dy;
+  }
+  resVal = Math.exp(-(D / 240) / RES_SCALE2);
+
+  ctx.globalCompositeOperation = 'lighter';
+  var sp = sprites[paletteIdx], cA = chordCol[paletteIdx], cB = chord2Col[paletteIdx];
+  ctx.lineWidth = 1;
+  for (var g = 0; g < 8; g++) {
+    var idxs = RING_IDX[g], q, ii, jj;
+    ctx.strokeStyle = cA[g];
+    ctx.beginPath();
+    for (q = 0; q < idxs.length; q++) {
+      ii = idxs[q]; jj = SIGMA[ii];
+      ctx.moveTo(SXs[ii], SYs[ii]);
+      ctx.lineTo(SXs[jj], SYs[jj]);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = cB[g];
+    ctx.beginPath();
+    for (q = 0; q < idxs.length; q++) {
+      ii = idxs[q]; jj = SIGMA[SIGMA[ii]];
+      ctx.moveTo(SXs[ii], SYs[ii]);
+      ctx.lineTo(SXs[jj], SYs[jj]);
+    }
+    ctx.stroke();
+  }
+  for (i = 0; i < 240; i++) {
+    var rr = 0.052 * zS * (0.82 + 0.38 * Math.min(1, Math.sqrt(PX[i] * PX[i] + PY[i] * PY[i]) / MAXR));
+    ctx.drawImage(sp[RING[i]], SXs[i] - rr, SYs[i] - rr, rr * 2, rr * 2);
+  }
+
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(vig, 0, 0, W, H);
+}
+
+function hud() {
+  var s = '\u03c6 ';
+  for (var i = 0; i < 4; i++) {
+    var turns = (phi[i] / TAU) % 1;
+    if (turns < 0) turns += 1;
+    s += turns.toFixed(3) + '\u03c4' + (i < 3 ? '  ' : '');
+  }
+  s += '  \u00b7  zoom ' + zoom.toFixed(2);
+  elPhi.textContent = s;
+  elFill.style.width = (resVal * 100).toFixed(1) + '%';
+  elPct.textContent = (resVal * 100).toFixed(0) + '%';
+}
+
+// ------------------------------------------------------------- #demo probe
+// coxeter-bloom.html#demo drives the real event handlers with synthetic
+// events and throws if any interaction fails to reach the render state.
+if (/#demo/.test(location.hash) || /(^|[?&])demo([=&]|$)/.test(location.search)) {
+  (function () {
+    function fire(ctor, type, opts) {
+      var E = window[ctor];
+      if (!E) throw new Error(ctor + ' unsupported in this browser');
+      canvas.dispatchEvent(new E(type, opts));
+    }
+    setTimeout(function () {
+      if (window.PointerEvent) {
+        fire('PointerEvent', 'pointermove', { clientX: W * 0.85, clientY: H * 0.25, bubbles: true });
+      } else {
+        fire('MouseEvent', 'mousemove', { clientX: W * 0.85, clientY: H * 0.25, bubbles: true });
+      }
+      setTimeout(function () {
+        if (mouse.x < 0.5) throw new Error('pointermove did not reach state: ' + mouse.x);
+        fire('WheelEvent', 'wheel', { deltaY: -480, bubbles: true, cancelable: true });
+        setTimeout(function () {
+          if (!(zoomT > 1.2)) throw new Error('wheel did not change zoom: ' + zoomT);
+          var before = paletteIdx;
+          fire('MouseEvent', 'click', { bubbles: true });
+          if (paletteIdx === before) throw new Error('click did not cycle palette');
+          document.title = 'COXETER BLOOM \u00b7 demo ok';
+          window.__bloomDemoOK = true;
+        }, 450);
+      }, 450);
+    }, 350);
+  })();
+}
+
+// debug handle (harmless in normal use)
+window.__bloom = {
+  phi: function () { return phi.slice(); },
+  zoom: function () { return zoom; },
+  zoomT: function () { return zoomT; },
+  palette: function () { return paletteIdx; },
+  mouse: function () { return { x: mouse.x, y: mouse.y }; },
+  resonance: function () { return resVal; }
+};
+
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

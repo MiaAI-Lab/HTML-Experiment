@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elliptic Relief — ℘(z; τ)</title>
+<style>
+  :root {
+    --ink: #ebe4d6;
+    --dim: rgba(235, 228, 214, 0.62);
+    --quiet: rgba(235, 228, 214, 0.42);
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #08090d;
+    overflow: hidden;
+    color: var(--ink);
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+    cursor: crosshair;
+    touch-action: none;
+  }
+  #label, #readout, #err {
+    position: fixed;
+    z-index: 2;
+    pointer-events: none;
+    user-select: none;
+    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.75);
+  }
+  #label {
+    left: 28px;
+    bottom: 24px;
+    max-width: 34rem;
+    font-family: Palatino, "Palatino Linotype", "Iowan Old Style", "Times New Roman", serif;
+  }
+  #label .eyebrow {
+    font-family: "Gill Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+    font-size: 10px;
+    letter-spacing: 0.32em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin: 0 0 6px;
+  }
+  #label h1 {
+    font-weight: 500;
+    font-size: 26px;
+    letter-spacing: 0.01em;
+    margin: 0 0 8px;
+  }
+  #label p {
+    margin: 0;
+    font-size: 14.5px;
+    line-height: 1.45;
+    color: var(--dim);
+  }
+  #label .gestures {
+    margin-top: 10px;
+    font-family: "Gill Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--quiet);
+  }
+  #readout {
+    right: 28px;
+    bottom: 26px;
+    text-align: right;
+    font-family: "Gill Sans", "Trebuchet MS", "Segoe UI", sans-serif;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    color: var(--dim);
+    font-variant-numeric: tabular-nums;
+  }
+  #readout .kind {
+    display: block;
+    margin-top: 4px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--quiet);
+    min-height: 1.2em;
+  }
+  #err {
+    left: 28px;
+    top: 24px;
+    right: 28px;
+    color: #f0c9c0;
+    font: 13px/1.4 ui-monospace, monospace;
+    white-space: pre-wrap;
+  }
+  @media (max-width: 740px) {
+    #label { left: 16px; bottom: 16px; max-width: calc(100% - 32px); }
+    #label h1 { font-size: 20px; }
+    #label p { font-size: 13px; }
+    #readout { right: 16px; bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Elliptic relief of the Weierstrass p-function. Move the pointer to change the period lattice, drag to orbit, scroll to come closer."></canvas>
+<div id="label">
+  <p class="eyebrow">Weierstrass · moduli</p>
+  <h1>Elliptic Relief</h1>
+  <p>Gold is the imaginary part of ℘(z; τ), silver the real part. They cross at right angles, which is what holomorphic means here. Height follows the real part. Color winds twice around every pole, because each pole has order two.</p>
+  <p class="gestures">Move · the lattice τ &nbsp;&nbsp; Drag · orbit &nbsp;&nbsp; Scroll · closer</p>
+</div>
+<div id="readout">
+  <div id="tau">τ = i</div>
+  <span class="kind" id="kind">square · lemniscatic</span>
+</div>
+<div id="err"></div>
+
+<script>
+"use strict";
+
+const FIELD = 720;
+const MESH = 520;
+const DELTA = 0.012;
+const GAIN = 0.062;
+const HEIGHT = 0.50;
+const SPAN = 1.64;
+const NTERMS = 4;
+const BG = [0.027, 0.029, 0.038];
+
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const fieldVS = `#version 300 es
+void main(){
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const postVS = `#version 300 es
+out vec2 vUv;
+void main(){
+  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
+  vUv = p;
+  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}`;
+
+const fieldFS = `#version 300 es
+precision highp float;
+precision highp int;
+uniform vec2 uTau;
+uniform vec2 uCenter;
+uniform float uSpan;
+uniform float uGain;
+uniform float uDelta;
+uniform vec2 uRes;
+uniform int uPack;
+out vec4 outColor;
+
+vec2 csqr(vec2 a){
+  return vec2(a.x*a.x - a.y*a.y, 2.0*a.x*a.y);
+}
+vec2 regInvSq(vec2 z){
+  // conj(z²) / (|z|² + δ)²  — same angular part as 1/z², no extra poles
+  vec2 z2 = csqr(z);
+  float d = dot(z, z) + uDelta;
+  return vec2(z2.x, -z2.y) / (d * d);
+}
+
+vec2 weierstrass(vec2 z){
+  vec2 acc = regInvSq(z);
+  const int N = ${NTERMS};
+  for (int n = -N; n <= N; ++n){
+    for (int m = -N; m <= N; ++m){
+      if (m == 0 && n == 0) continue;
+      vec2 omega = vec2(float(m), 0.0) + float(n) * uTau;
+      acc += regInvSq(z - omega) - regInvSq(omega);
+    }
+  }
+  return acc - uCenter;
+}
+
+void main(){
+  vec2 uv = gl_FragCoord.xy / uRes;
+  vec2 z = (uv * 2.0 - 1.0) * uSpan;
+  vec2 w = weierstrass(z);
+  float h = atan(uGain * w.x);
+  float imA = atan(uGain * w.y);
+  if (uPack == 1){
+    float h01 = clamp(h / 3.14159265 + 0.5, 0.0, 1.0);
+    float i01 = clamp(imA / 3.14159265 + 0.5, 0.0, 1.0);
+    float hq = floor(h01 * 65535.0 + 0.5);
+    float iq = floor(i01 * 65535.0 + 0.5);
+    outColor = vec4(
+      floor(hq / 256.0) / 255.0,
+      mod(hq, 256.0) / 255.0,
+      floor(iq / 256.0) / 255.0,
+      mod(iq, 256.0) / 255.0
+    );
+  } else {
+    outColor = vec4(h, imA, w.x, w.y);
+  }
+}`;
+
+const meshVS = `#version 300 es
+precision highp float;
+precision highp int;
+layout(location=0) in vec2 aUV;
+uniform sampler2D uField;
+uniform vec2 uFieldSize;
+uniform mat4 uMVP;
+uniform float uHeight;
+uniform float uSpan;
+uniform int uPack;
+out vec3 vWorld;
+out vec3 vN;
+out vec2 vUV;
+
+float dec16(vec2 p){
+  float hi = floor(p.x * 255.0 + 0.5);
+  float lo = floor(p.y * 255.0 + 0.5);
+  return (hi * 256.0 + lo) / 65535.0;
+}
+vec4 decode(vec4 t){
+  if (uPack == 1){
+    float h = (dec16(t.rg) - 0.5) * 3.14159265;
+    float imA = (dec16(t.ba) - 0.5) * 3.14159265;
+    float re = tan(clamp(h, -1.55, 1.55));
+    float im = tan(clamp(imA, -1.55, 1.55));
+    return vec4(h, imA, re, im);
+  }
+  return t;
+}
+vec4 fieldAt(vec2 uv){
+  if (uPack == 0) return texture(uField, uv);
+  vec2 sz = uFieldSize;
+  vec2 p = clamp(uv, 0.0, 1.0) * sz - 0.5;
+  vec2 i = clamp(floor(p), vec2(0.0), sz - 1.0);
+  vec2 f = clamp(p - i, 0.0, 1.0);
+  vec2 i2 = min(i + 1.0, sz - 1.0);
+  vec4 a = decode(texture(uField, (i + 0.5) / sz));
+  vec4 b = decode(texture(uField, (vec2(i2.x, i.y) + 0.5) / sz));
+  vec4 c = decode(texture(uField, (vec2(i.x, i2.y) + 0.5) / sz));
+  vec4 d = decode(texture(uField, (i2 + 0.5) / sz));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+float maskAt(vec2 uv){
+  float r = length(uv * 2.0 - 1.0);
+  return 1.0 - smoothstep(0.64, 0.98, r);
+}
+float H(vec2 uv){
+  return fieldAt(uv).r * maskAt(uv);
+}
+
+void main(){
+  vec2 texel = 2.5 / uFieldSize;
+  float h = H(aUV);
+  float hx = H(aUV + vec2(texel.x, 0.0)) - H(aUV - vec2(texel.x, 0.0));
+  float hy = H(aUV + vec2(0.0, texel.y)) - H(aUV - vec2(0.0, texel.y));
+  float dhdx = uHeight * hx / (4.0 * texel.x * uSpan);
+  float dhdy = uHeight * hy / (4.0 * texel.y * uSpan);
+  vec2 z = (aUV * 2.0 - 1.0) * uSpan;
+  vWorld = vec3(z, h * uHeight);
+  vN = normalize(vec3(-dhdx, -dhdy, 1.0));
+  vUV = aUV;
+  gl_Position = uMVP * vec4(vWorld, 1.0);
+}`;
+
+const meshFS = `#version 300 es
+precision highp float;
+precision highp int;
+in vec3 vWorld;
+in vec3 vN;
+in vec2 vUV;
+uniform sampler2D uField;
+uniform vec2 uFieldSize;
+uniform vec3 uCam;
+uniform vec3 uKey;
+uniform vec3 uLamp;
+uniform vec2 uTau;
+uniform vec3 uBg;
+uniform float uSpan;
+uniform float uHeight;
+uniform int uPack;
+out vec4 outColor;
+
+float dec16(vec2 p){
+  float hi = floor(p.x * 255.0 + 0.5);
+  float lo = floor(p.y * 255.0 + 0.5);
+  return (hi * 256.0 + lo) / 65535.0;
+}
+vec4 decode(vec4 t){
+  if (uPack == 1){
+    float h = (dec16(t.rg) - 0.5) * 3.14159265;
+    float imA = (dec16(t.ba) - 0.5) * 3.14159265;
+    float re = tan(clamp(h, -1.55, 1.55));
+    float im = tan(clamp(imA, -1.55, 1.55));
+    return vec4(h, imA, re, im);
+  }
+  return t;
+}
+vec4 fieldAt(vec2 uv){
+  if (uPack == 0) return texture(uField, uv);
+  vec2 sz = uFieldSize;
+  vec2 p = clamp(uv, 0.0, 1.0) * sz - 0.5;
+  vec2 i = clamp(floor(p), vec2(0.0), sz - 1.0);
+  vec2 f = clamp(p - i, 0.0, 1.0);
+  vec2 i2 = min(i + 1.0, sz - 1.0);
+  vec4 a = decode(texture(uField, (i + 0.5) / sz));
+  vec4 b = decode(texture(uField, (vec2(i2.x, i.y) + 0.5) / sz));
+  vec4 c = decode(texture(uField, (vec2(i.x, i2.y) + 0.5) / sz));
+  vec4 d = decode(texture(uField, (i2 + 0.5) / sz));
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+vec3 ramp(float t){
+  t = fract(t);
+  vec3 c0 = vec3(0.04, 0.20, 0.30);
+  vec3 c1 = vec3(0.95, 0.40, 0.14);
+  vec3 c2 = vec3(1.00, 0.84, 0.60);
+  vec3 c3 = vec3(0.66, 0.10, 0.26);
+  vec3 c4 = vec3(0.08, 0.40, 0.32);
+  float s = t * 5.0;
+  float f = smoothstep(0.0, 1.0, fract(s));
+  if (s < 1.0) return mix(c0, c1, f);
+  if (s < 2.0) return mix(c1, c2, f);
+  if (s < 3.0) return mix(c2, c3, f);
+  if (s < 4.0) return mix(c3, c4, f);
+  return mix(c4, c0, f);
+}
+
+float lineMask(float coord){
+  float fw = fwidth(coord);
+  float d = abs(coord - floor(coord + 0.5));
+  float w = max(fw * 0.9, 0.007);
+  float mask = 1.0 - smoothstep(w * 0.15, w * 1.15, d);
+  float spare = 1.0 - smoothstep(0.22, 0.7, fw);
+  return mask * spare;
+}
+
+float softShadow(vec3 p, vec3 L){
+  float horiz = length(L.xy);
+  if (horiz < 1e-4) return 1.0;
+  vec2 dir = L.xy / horiz;
+  float slope = L.z / horiz;
+  float sh = 1.0;
+  float t = 0.045;
+  for (int i = 0; i < 22; ++i){
+    vec2 q = p.xy + dir * t;
+    vec2 uv = q / uSpan * 0.5 + 0.5;
+    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) break;
+    float hq = fieldAt(uv).r * uHeight;
+    float rayh = p.z + slope * t + 0.028;
+    sh = min(sh, clamp(12.0 * (rayh - hq) / t, 0.0, 1.0));
+    t += 0.02 + t * 0.09;
+    if (sh < 0.05 || t > 2.4) break;
+  }
+  return clamp(sh, 0.18, 1.0);
+}
+
+void main(){
+  vec4 tex = fieldAt(vUV);
+  vec3 N = normalize(vN);
+  vec3 V = normalize(uCam - vWorld);
+  float ndl = dot(N, uKey);
+  float diff = clamp(ndl, 0.0, 1.0);
+  float sh = softShadow(vWorld, uKey);
+
+  float ang = atan(tex.a, tex.b);
+  float fres = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 3.0);
+  vec3 phase = ramp(ang / 6.2831853 + fres * 0.08);
+
+  vec3 bone = vec3(0.80, 0.75, 0.66);
+  vec3 albedo = mix(phase, bone, 0.30);
+
+  vec3 fillDir = normalize(vec3(-uKey.x * 0.6, -uKey.y * 0.4, 0.85));
+  float fill = clamp(dot(N, fillDir) * 0.5 + 0.5, 0.0, 1.0);
+
+  vec3 col = albedo * (0.04 + 0.16 * fill);
+  col += bone * diff * sh * 0.72;
+  col += phase * clamp(0.8 - ndl, 0.0, 1.0) * (0.55 + 0.30 * sh);
+
+  vec3 H = normalize(uKey + V);
+  float spec = pow(clamp(dot(N, H), 0.0, 1.0), 56.0) * sh;
+  col += spec * mix(vec3(1.0, 0.96, 0.88), phase, 0.45) * 0.38;
+
+  float rim = pow(fres, 1.15);
+  col += rim * vec3(0.45, 0.55, 0.70) * 0.22;
+
+  vec3 toLamp = uLamp - vWorld;
+  float ld = length(toLamp);
+  vec3 ldir = toLamp / max(ld, 1e-3);
+  float lamp = clamp(dot(N, ldir), 0.0, 1.0) / (1.0 + ld * ld * 0.42);
+  col += vec3(1.0, 0.74, 0.46) * lamp * 1.15;
+
+  float crest = smoothstep(1.20, 1.52, abs(tex.r));
+  col += vec3(1.0, 0.90, 0.72) * crest * 0.08;
+
+  float facing = smoothstep(0.22, 0.78, N.z);
+  float silver = lineMask(tex.r / 3.14159265 * 2.4) * facing;
+  float gold = lineMask(tex.g / 3.14159265 * 3.6) * facing;
+  col += vec3(0.75, 0.82, 0.92) * silver * (0.18 + 0.30 * diff * sh);
+  col += vec3(1.0, 0.72, 0.34) * gold * (0.46 + 0.42 * diff * sh);
+
+  vec2 z = vWorld.xy;
+  float eta = z.y / max(uTau.y, 0.2);
+  float xi = z.x - eta * uTau.x;
+  float dcell = min(abs(xi - floor(xi + 0.5)), abs(eta - floor(eta + 0.5)));
+  float gfw = max(fwidth(xi), 0.002);
+  float groove = 1.0 - smoothstep(gfw * 0.4, gfw * 0.4 + 0.012, dcell);
+  col *= 1.0 - groove * 0.28;
+
+  float ao = 1.0;
+  vec2 ts = 1.0 / uFieldSize;
+  float h0 = tex.r;
+  for (int i = 2; i <= 5; ++i){
+    float s = ts.x * float(i) * 2.2;
+    float avg = (
+      fieldAt(vUV + vec2(s, 0.0)).r +
+      fieldAt(vUV + vec2(-s, 0.0)).r +
+      fieldAt(vUV + vec2(0.0, s)).r +
+      fieldAt(vUV + vec2(0.0, -s)).r
+    ) * 0.25;
+    ao -= clamp(avg - h0, 0.0, 0.8) * 0.22;
+  }
+  col *= clamp(ao, 0.55, 1.0);
+
+  float rad = length(z) / uSpan;
+  float fade = 1.0 - smoothstep(0.60, 0.94, rad);
+  float fog = 1.0 - exp(-0.03 * length(uCam - vWorld));
+  col = mix(col, uBg, clamp(fog, 0.0, 0.55));
+  col = mix(uBg, col, fade);
+
+  outColor = vec4(col, 1.0);
+}`;
+
+const brightFS = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+in vec2 vUv;
+out vec4 outColor;
+void main(){
+  vec3 c = texture(uScene, vUv).rgb;
+  float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+  vec3 b = c * smoothstep(0.62, 1.05, l);
+  outColor = vec4(b, 1.0);
+}`;
+
+const blurFS = `#version 300 es
+precision highp float;
+uniform sampler2D uTex;
+uniform vec2 uDir;
+in vec2 vUv;
+out vec4 outColor;
+void main(){
+  vec2 uv = vUv;
+  vec2 texel = uDir / vec2(textureSize(uTex, 0));
+  float w0 = 0.227027;
+  float w1 = 0.1945946;
+  float w2 = 0.1216216;
+  float w3 = 0.054054;
+  float w4 = 0.016216;
+  vec3 s = texture(uTex, uv).rgb * w0;
+  s += texture(uTex, uv + texel * 1.0).rgb * w1;
+  s += texture(uTex, uv - texel * 1.0).rgb * w1;
+  s += texture(uTex, uv + texel * 2.0).rgb * w2;
+  s += texture(uTex, uv - texel * 2.0).rgb * w2;
+  s += texture(uTex, uv + texel * 3.0).rgb * w3;
+  s += texture(uTex, uv - texel * 3.0).rgb * w3;
+  s += texture(uTex, uv + texel * 4.0).rgb * w4;
+  s += texture(uTex, uv - texel * 4.0).rgb * w4;
+  outColor = vec4(s, 1.0);
+}`;
+
+const compositeFS = `#version 300 es
+precision highp float;
+uniform sampler2D uScene;
+uniform sampler2D uBloom;
+uniform float uFade;
+uniform float uTime;
+in vec2 vUv;
+out vec4 outColor;
+float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
+void main(){
+  vec2 uv = vUv;
+  vec2 texel = 1.0 / vec2(textureSize(uScene, 0));
+  vec3 scene = texture(uScene, uv).rgb;
+  float l = luma(scene);
+  float lL = luma(texture(uScene, uv + vec2(-texel.x, 0.0)).rgb);
+  float lR = luma(texture(uScene, uv + vec2( texel.x, 0.0)).rgb);
+  float lD = luma(texture(uScene, uv + vec2(0.0, -texel.y)).rgb);
+  float lU = luma(texture(uScene, uv + vec2(0.0,  texel.y)).rgb);
+  float lMin = min(l, min(min(lL, lR), min(lD, lU)));
+  float lMax = max(l, max(max(lL, lR), max(lD, lU)));
+  float contrast = lMax - lMin;
+  vec2 dir = vec2((lL + lR) * 0.5 - l, (lD + lU) * 0.5 - l);
+  float along = abs(lL - lR) + abs(lD - lU);
+  if (along > 1e-4 && contrast > 0.05){
+    dir = vec2(lL - lR, lD - lU);
+    dir *= 1.6 * texel / (length(dir) + 1e-4);
+    vec3 blur = (
+      texture(uScene, uv + dir).rgb +
+      texture(uScene, uv - dir).rgb +
+      scene * 2.0
+    ) * 0.25;
+    scene = mix(scene, blur, smoothstep(0.035, 0.14, contrast));
+  }
+  vec3 bloom = texture(uBloom, uv).rgb;
+  vec3 col = scene + bloom * 0.55;
+  vec2 q = uv * 2.0 - 1.0;
+  float vig = smoothstep(1.28, 0.28, length(q * vec2(1.0, 0.90)));
+  col *= mix(0.68, 1.0, vig);
+  col = 1.0 - exp(-max(col, 0.0) * 1.12);
+  float n = fract(sin(dot(gl_FragCoord.xy + fract(uTime) * 17.0, vec2(12.9898, 78.233))) * 43758.5453);
+  col += (n - 0.5) * 0.012;
+  col *= uFade;
+  outColor = vec4(col, 1.0);
+}`;
+
+function fail(msg){
+  const el = document.getElementById("err");
+  el.textContent = msg;
+  console.error(msg);
+}
+
+function compile(gl, type, src){
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)){
+    const log = gl.getShaderInfoLog(sh);
+    gl.deleteShader(sh);
+    throw new Error(log);
+  }
+  return sh;
+}
+
+function program(gl, vs, fs){
+  const p = gl.createProgram();
+  const a = compile(gl, gl.VERTEX_SHADER, vs);
+  const b = compile(gl, gl.FRAGMENT_SHADER, fs);
+  gl.attachShader(p, a);
+  gl.attachShader(p, b);
+  gl.linkProgram(p);
+  gl.deleteShader(a);
+  gl.deleteShader(b);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    const log = gl.getProgramInfoLog(p);
+    gl.deleteProgram(p);
+    throw new Error(log);
+  }
+  return p;
+}
+
+function csqr(a){ return [a[0]*a[0] - a[1]*a[1], 2*a[0]*a[1]]; }
+function regInvSq(z){
+  const z2 = csqr(z);
+  const d = z[0]*z[0] + z[1]*z[1] + DELTA;
+  return [z2[0] / (d*d), -z2[1] / (d*d)];
+}
+function weierstrassJS(z, tau){
+  const acc = regInvSq(z);
+  for (let n = -NTERMS; n <= NTERMS; n++){
+    for (let m = -NTERMS; m <= NTERMS; m++){
+      if (m === 0 && n === 0) continue;
+      const omega = [m + n*tau[0], n*tau[1]];
+      const a = regInvSq([z[0]-omega[0], z[1]-omega[1]]);
+      const b = regInvSq(omega);
+      acc[0] += a[0] - b[0];
+      acc[1] += a[1] - b[1];
+    }
+  }
+  return acc;
+}
+
+function sub(a, b){ return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+function dot(a, b){ return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+function cross(a, b){
+  return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+}
+function norm(a){
+  const L = Math.hypot(a[0], a[1], a[2]) || 1;
+  return [a[0]/L, a[1]/L, a[2]/L];
+}
+function mulMat(a, b){
+  const o = new Float32Array(16);
+  for (let c = 0; c < 4; c++){
+    for (let r = 0; r < 4; r++){
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k*4+r] * b[c*4+k];
+      o[c*4+r] = s;
+    }
+  }
+  return o;
+}
+function perspective(fovy, aspect, near, far){
+  const f = 1 / Math.tan(fovy / 2);
+  const nf = 1 / (near - far);
+  const o = new Float32Array(16);
+  o[0] = f / aspect;
+  o[5] = f;
+  o[10] = (far + near) * nf;
+  o[11] = -1;
+  o[14] = 2 * far * near * nf;
+  return o;
+}
+function lookAt(eye, target, up){
+  const z = norm(sub(eye, target));
+  const x = norm(cross(up, z));
+  const y = cross(z, x);
+  const o = new Float32Array(16);
+  o[0]=x[0]; o[1]=y[0]; o[2]=z[0];
+  o[4]=x[1]; o[5]=y[1]; o[6]=z[1];
+  o[8]=x[2]; o[9]=y[2]; o[10]=z[2];
+  o[12]=-dot(x, eye); o[13]=-dot(y, eye); o[14]=-dot(z, eye); o[15]=1;
+  return { mat: o, right: x, up: y, back: z, eye };
+}
+function spring(v, vel, target, dt, omega, zeta){
+  const a = omega*omega*(target - v) - 2*zeta*omega*vel;
+  vel += a * dt;
+  v += vel * dt;
+  return [v, vel];
+}
+function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+function driftTau(t){
+  return {
+    x: 0.20 * Math.sin(t * 0.053) + 0.055 * Math.sin(t * 0.019 + 1.7),
+    y: 1.06 + 0.15 * Math.sin(t * 0.035 + 0.45),
+  };
+}
+
+function magnet(x, y){
+  const wells = [
+    [0, 1, "square · lemniscatic"],
+    [0.5, Math.sqrt(3) / 2, "hexagonal"],
+    [-0.5, Math.sqrt(3) / 2, "hexagonal"],
+  ];
+  let name = "";
+  for (const w of wells){
+    const dx = x - w[0], dy = y - w[1];
+    const d = Math.hypot(dx, dy);
+    const R = 0.085;
+    if (d < R){
+      const pull = (1 - d / R) ** 2 * 0.62;
+      x -= dx * pull;
+      y -= dy * pull;
+      if (d < R * 0.72) name = w[2];
+    }
+  }
+  return { x, y, name };
+}
+
+function classify(x, y){
+  if (Math.hypot(x, y - 1) < 0.04) return "square · lemniscatic";
+  const hexY = Math.sqrt(3) / 2;
+  if (Math.min(Math.hypot(x - 0.5, y - hexY), Math.hypot(x + 0.5, y - hexY)) < 0.045) return "hexagonal";
+  return "";
+}
+
+function formatTau(x, y){
+  const ax = Math.abs(x).toFixed(3);
+  const ay = Math.abs(y).toFixed(3);
+  const sx = x < -0.0005 ? "−" : "";
+  const sy = y < 0 ? "−" : "+";
+  if (Math.abs(x) < 0.0008 && Math.abs(y - 1) < 0.0008) return "τ = i";
+  return `τ = ${sx}${ax} ${sy} ${ay} i`;
+}
+
+function main(){
+  const canvas = document.getElementById("c");
+  const gl = canvas.getContext("webgl2", {
+    alpha: false,
+    antialias: false,
+    depth: true,
+    stencil: false,
+    powerPreference: "high-performance",
+  });
+  if (!gl){ fail("This piece needs WebGL2."); return; }
+  const floatExt = gl.getExtension("EXT_color_buffer_float");
+  const hash = location.hash.replace("#", "");
+  let pack = !floatExt || hash.includes("packed");
+
+  let fieldProg, meshProg, brightProg, blurProg, compProg;
+  try {
+    fieldProg = program(gl, fieldVS, fieldFS);
+    meshProg = program(gl, meshVS, meshFS);
+    brightProg = program(gl, postVS, brightFS);
+    blurProg = program(gl, postVS, blurFS);
+    compProg = program(gl, postVS, compositeFS);
+  } catch (err){
+    fail(String(err.message || err));
+    return;
+  }
+
+  const prec = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+  if (!prec || prec.precision < 20){
+    fail("This GPU cannot evaluate the lattice sum precisely enough.");
+    return;
+  }
+
+  function loc(p, name){ return gl.getUniformLocation(p, name); }
+
+  const mesh = buildMesh(gl, MESH);
+
+  let fieldTex = null, fieldFbo = null;
+  let scene = null, bright = null, blurA = null, blurB = null;
+  let viewW = 1, viewH = 1;
+
+  function destroyTarget(t){
+    if (!t) return;
+    gl.deleteFramebuffer(t.fbo);
+    gl.deleteTexture(t.tex);
+    if (t.depth) gl.deleteRenderbuffer(t.depth);
+  }
+
+  function makeTarget(w, h, floatColor, withDepth){
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    if (floatColor){
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, null);
+    } else {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    let depth = null;
+    if (withDepth){
+      depth = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
+    }
+    const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (status !== gl.FRAMEBUFFER_COMPLETE){
+      destroyTarget({ fbo, tex, depth });
+      return null;
+    }
+    return { fbo, tex, depth, w, h };
+  }
+
+  function allocField(){
+    destroyTarget(fieldFbo ? { fbo: fieldFbo, tex: fieldTex, depth: null } : null);
+    if (!pack){
+      const t = makeTarget(FIELD, FIELD, true, false);
+      if (t){ fieldTex = t.tex; fieldFbo = t.fbo; return; }
+      pack = true;
+    }
+    fieldTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, fieldTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, FIELD, FIELD, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    fieldFbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fieldFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fieldTex, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE){
+      fail("Could not allocate the lattice field.");
+    }
+  }
+
+  function resize(){
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.6);
+    let w = Math.max(2, Math.floor(canvas.clientWidth * dpr));
+    let h = Math.max(2, Math.floor(canvas.clientHeight * dpr));
+    const cap = 1600 * 1000;
+    if (w * h > cap){
+      const s = Math.sqrt(cap / (w * h));
+      w = Math.max(2, Math.floor(w * s));
+      h = Math.max(2, Math.floor(h * s));
+    }
+    if (w === viewW && h === viewH && scene) return;
+    viewW = w; viewH = h;
+    canvas.width = w; canvas.height = h;
+    destroyTarget(scene); destroyTarget(bright); destroyTarget(blurA); destroyTarget(blurB);
+    scene = makeTarget(w, h, false, true);
+    const bw = Math.max(2, w >> 1), bh = Math.max(2, h >> 1);
+    bright = makeTarget(bw, bh, false, false);
+    blurA = makeTarget(bw, bh, false, false);
+    blurB = makeTarget(bw, bh, false, false);
+    if (!scene || !bright || !blurA || !blurB) fail("Could not allocate the framebuffers.");
+  }
+
+  allocField();
+  resize();
+  window.addEventListener("resize", resize);
+
+  const fov = 33 * Math.PI / 180;
+  const homeDist = 5.85;
+  const state = {
+    tauX: 0, tauY: 1, tauVX: 0, tauVY: 0,
+    az: 0.46, el: 0.54, dist: homeDist,
+    azV: 0, elV: 0, distV: 0,
+    distT: homeDist,
+    steer: false,
+    drag: false,
+    hold: null,
+    px: 0, py: 0,
+    ndcX: 0, ndcY: 0,
+    lampX: 0.15, lampY: -0.2,
+    fieldKey: "",
+    born: performance.now(),
+  };
+
+  if (hash.includes("hex")) state.hold = { x: 0.5, y: Math.sqrt(3) / 2 };
+  else if (hash.includes("shear")) state.hold = { x: 0.30, y: 1.16 };
+  else if (hash.includes("shot")) state.hold = { x: 0, y: 1 };
+  if (state.hold){ state.tauX = state.hold.x; state.tauY = state.hold.y; }
+
+  const tauEl = document.getElementById("tau");
+  const kindEl = document.getElementById("kind");
+
+  function ndcFromEvent(e){
+    const r = canvas.getBoundingClientRect();
+    state.ndcX = ((e.clientX - r.left) / r.width) * 2 - 1;
+    state.ndcY = 1 - ((e.clientY - r.top) / r.height) * 2;
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    state.drag = true;
+    state.px = e.clientX; state.py = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointerup", () => { state.drag = false; });
+  canvas.addEventListener("pointercancel", () => { state.drag = false; });
+  canvas.addEventListener("pointerleave", () => { state.steer = false; });
+  canvas.addEventListener("pointermove", (e) => {
+    ndcFromEvent(e);
+    if (state.drag){
+      const dx = e.clientX - state.px;
+      const dy = e.clientY - state.py;
+      state.px = e.clientX; state.py = e.clientY;
+      const dt = 1 / 60;
+      state.az -= dx * 0.0055;
+      state.el = clamp(state.el + dy * 0.0034, 0.22, 1.18);
+      state.azV = -dx * 0.0055 / dt;
+      state.elV = dy * 0.0034 / dt;
+    } else {
+      state.steer = true;
+      state.hold = null;
+    }
+  });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    state.distT = clamp(state.distT * Math.exp(dy * 0.00115), 3.1, 11.0);
+  }, { passive: false });
+
+  let pinch = 0;
+  canvas.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 2){
+      e.preventDefault();
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const d = Math.hypot(dx, dy);
+      if (pinch > 0) state.distT = clamp(state.distT * (pinch / d), 3.1, 11.0);
+      pinch = d;
+    }
+  }, { passive: false });
+  canvas.addEventListener("touchend", () => { pinch = 0; });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "s" || e.key === "S" || e.key === "0"){
+      state.hold = { x: 0, y: 1 };
+      state.steer = false;
+    } else if (e.key === "h" || e.key === "H" || e.key === "6"){
+      state.hold = { x: 0.5, y: Math.sqrt(3) / 2 };
+      state.steer = false;
+    } else if (e.key === "r" || e.key === "R"){
+      state.hold = { x: 0, y: 1 };
+      state.steer = false;
+      state.az = 0.46; state.el = 0.54; state.distT = homeDist;
+      state.azV = state.elV = state.distV = 0;
+    }
+  });
+
+  function camera(){
+    const cp = Math.cos(state.el), sp = Math.sin(state.el);
+    const ca = Math.cos(state.az), sa = Math.sin(state.az);
+    const eye = [state.dist * cp * ca, state.dist * cp * sa, state.dist * sp];
+    return lookAt(eye, [0.0, -0.04, -0.28], [0, 0, 1]);
+  }
+
+  function lampFromPointer(cam){
+    const aspect = viewW / viewH;
+    const t = Math.tan(fov / 2);
+    const cx = state.ndcX * t * aspect;
+    const cy = state.ndcY * t;
+    const cz = -1;
+    const dir = [
+      cam.right[0]*cx + cam.up[0]*cy + cam.back[0]*cz,
+      cam.right[1]*cx + cam.up[1]*cy + cam.back[1]*cz,
+      cam.right[2]*cx + cam.up[2]*cy + cam.back[2]*cz,
+    ];
+    if (Math.abs(dir[2]) < 1e-5) return;
+    const k = (0.15 - cam.eye[2]) / dir[2];
+    if (k < 0) return;
+    let x = cam.eye[0] + dir[0] * k;
+    let y = cam.eye[1] + dir[1] * k;
+    const r = Math.hypot(x, y);
+    const lim = SPAN * 0.92;
+    if (r > lim){ x *= lim / r; y *= lim / r; }
+    state.lampX = x; state.lampY = y;
+  }
+
+  function renderField(center){
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fieldFbo);
+    gl.viewport(0, 0, FIELD, FIELD);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(fieldProg);
+    gl.uniform2f(loc(fieldProg, "uTau"), state.tauX, state.tauY);
+    gl.uniform2f(loc(fieldProg, "uCenter"), center[0], center[1]);
+    gl.uniform1f(loc(fieldProg, "uSpan"), SPAN);
+    gl.uniform1f(loc(fieldProg, "uGain"), GAIN);
+    gl.uniform1f(loc(fieldProg, "uDelta"), DELTA);
+    gl.uniform2f(loc(fieldProg, "uRes"), FIELD, FIELD);
+    gl.uniform1i(loc(fieldProg, "uPack"), pack ? 1 : 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  function drawFullscreen(prog){
+    gl.useProgram(prog);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  let last = performance.now();
+  function frame(now){
+    if (document.hidden){ last = now; requestAnimationFrame(frame); return; }
+    const dt = Math.min(0.033, (now - last) / 1000);
+    last = now;
+    const t = (now - state.born) / 1000;
+
+    let tx, ty, tname = "";
+    if (state.steer){
+      const mx = state.ndcX * 0.52;
+      const my = 1.04 + state.ndcY * 0.40;
+      const m = magnet(mx, my);
+      tx = m.x; ty = clamp(m.y, 0.64, 1.55); tname = m.name;
+    } else if (state.hold){
+      tx = state.hold.x; ty = state.hold.y; tname = classify(tx, ty);
+    } else if (reduceMotion){
+      tx = 0; ty = 1; tname = "square · lemniscatic";
+    } else {
+      const d = driftTau(t);
+      tx = d.x; ty = d.y;
+    }
+
+    [state.tauX, state.tauVX] = spring(state.tauX, state.tauVX, tx, dt, 5.2, 0.88);
+    [state.tauY, state.tauVY] = spring(state.tauY, state.tauVY, ty, dt, 5.2, 0.88);
+    if (!state.drag){
+      const spin = reduceMotion ? 0 : 0.045;
+      state.az += state.azV * dt;
+      state.el += state.elV * dt;
+      state.azV *= Math.exp(-2.6 * dt);
+      state.elV *= Math.exp(-2.6 * dt);
+      if (Math.abs(state.azV) < 0.02) state.az += spin * dt;
+      state.el = clamp(state.el, 0.22, 1.18);
+    }
+    [state.dist, state.distV] = spring(state.dist, state.distV, state.distT, dt, 7.5, 0.95);
+
+    const shown = classify(state.tauX, state.tauY) || tname;
+    tauEl.textContent = formatTau(state.tauX, state.tauY);
+    kindEl.textContent = shown;
+
+    const key = state.tauX.toFixed(5) + "," + state.tauY.toFixed(5) + (pack ? "p" : "f");
+    if (key !== state.fieldKey){
+      const center = weierstrassJS([0.5 + 0.5*state.tauX, 0.5*state.tauY], [state.tauX, state.tauY]);
+      renderField(center);
+      state.fieldKey = key;
+    }
+
+    const cam = camera();
+    if (state.steer || state.drag) lampFromPointer(cam);
+    const aspect = viewW / Math.max(1, viewH);
+    const mvp = mulMat(perspective(fov, aspect, 0.08, 40), cam.mat);
+
+    const lightAz = (hash.includes("shot") ? 0.95 : (reduceMotion ? 0.7 : t * 0.09)) + (state.steer ? state.ndcX * 0.45 : 0);
+    const lightEl = (hash.includes("shot") ? 0.30 : 0.24) + (state.steer ? state.ndcY * 0.045 : 0);
+    const keyDir = norm([
+      Math.cos(lightEl) * Math.cos(lightAz),
+      Math.cos(lightEl) * Math.sin(lightAz),
+      Math.sin(lightEl),
+    ]);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, scene.fbo);
+    gl.viewport(0, 0, scene.w, scene.h);
+    gl.clearColor(BG[0], BG[1], BG[2], 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.CULL_FACE);
+
+    gl.useProgram(meshProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, fieldTex);
+    gl.uniform1i(loc(meshProg, "uField"), 0);
+    gl.uniform2f(loc(meshProg, "uFieldSize"), FIELD, FIELD);
+    gl.uniformMatrix4fv(loc(meshProg, "uMVP"), false, mvp);
+    gl.uniform1f(loc(meshProg, "uHeight"), HEIGHT);
+    gl.uniform1f(loc(meshProg, "uSpan"), SPAN);
+    gl.uniform1i(loc(meshProg, "uPack"), pack ? 1 : 0);
+    gl.uniform3f(loc(meshProg, "uCam"), cam.eye[0], cam.eye[1], cam.eye[2]);
+    gl.uniform3f(loc(meshProg, "uKey"), keyDir[0], keyDir[1], keyDir[2]);
+    gl.uniform3f(loc(meshProg, "uLamp"), state.lampX, state.lampY, 1.25);
+    gl.uniform2f(loc(meshProg, "uTau"), state.tauX, state.tauY);
+    gl.uniform3f(loc(meshProg, "uBg"), BG[0], BG[1], BG[2]);
+    gl.bindVertexArray(mesh.vao);
+    gl.drawElements(gl.TRIANGLES, mesh.count, gl.UNSIGNED_INT, 0);
+    gl.bindVertexArray(null);
+
+    gl.disable(gl.DEPTH_TEST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, bright.fbo);
+    gl.viewport(0, 0, bright.w, bright.h);
+    gl.useProgram(brightProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, scene.tex);
+    gl.uniform1i(loc(brightProg, "uScene"), 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, blurA.fbo);
+    gl.viewport(0, 0, blurA.w, blurA.h);
+    gl.useProgram(blurProg);
+    gl.bindTexture(gl.TEXTURE_2D, bright.tex);
+    gl.uniform1i(loc(blurProg, "uTex"), 0);
+    gl.uniform2f(loc(blurProg, "uDir"), 1, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, blurB.fbo);
+    gl.bindTexture(gl.TEXTURE_2D, blurA.tex);
+    gl.uniform2f(loc(blurProg, "uDir"), 0, 1);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    const fade = reduceMotion ? 1 : Math.min(1, t / 1.35);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, viewW, viewH);
+    gl.useProgram(compProg);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, scene.tex);
+    gl.uniform1i(loc(compProg, "uScene"), 0);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, blurB.tex);
+    gl.uniform1i(loc(compProg, "uBloom"), 1);
+    gl.uniform1f(loc(compProg, "uFade"), hash.includes("shot") ? 1 : fade);
+    gl.uniform1f(loc(compProg, "uTime"), t);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+function buildMesh(gl, n){
+  const uv = new Float32Array(n * n * 2);
+  let p = 0;
+  for (let j = 0; j < n; j++){
+    for (let i = 0; i < n; i++){
+      uv[p++] = i / (n - 1);
+      uv[p++] = j / (n - 1);
+    }
+  }
+  const idx = new Uint32Array((n - 1) * (n - 1) * 6);
+  let k = 0;
+  for (let j = 0; j < n - 1; j++){
+    for (let i = 0; i < n - 1; i++){
+      const a = j * n + i;
+      idx[k++] = a;
+      idx[k++] = a + 1;
+      idx[k++] = a + n;
+      idx[k++] = a + 1;
+      idx[k++] = a + n + 1;
+      idx[k++] = a + n;
+    }
+  }
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, uv, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+  return { vao, count: idx.length };
+}
+
+main();
+</script>
+</body>
+</html>

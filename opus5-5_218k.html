@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Open Book</title>
+<style>
+:root{
+  color-scheme: dark;
+  --ground:#030308;
+  --ink:rgba(242,236,255,.9);
+  --soft:rgba(224,218,246,.58);
+  --faint:rgba(224,218,246,.32);
+  --gold:#f2c98e;
+  --gold-line:rgba(242,201,142,.42);
+  --gold-wash:rgba(242,201,142,.08);
+  --glass:rgba(9,8,20,.62);
+  --glass-line:rgba(255,255,255,.09);
+  --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua","URW Palladio L",Georgia,serif;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono","Liberation Mono",monospace;
+  --edge:clamp(16px,3.6vw,46px);
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--ground);color:var(--ink);overflow:hidden;
+  -webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:none}
+canvas.drag{cursor:grabbing}
+
+.ui{position:fixed;pointer-events:none;opacity:0;transition:opacity 1.6s ease}
+body.ready .ui{opacity:1}
+body.hide .ui{opacity:0 !important}
+body.hide .ui *{pointer-events:none !important}
+
+#title{top:calc(var(--edge) + env(safe-area-inset-top,0px));left:var(--edge);
+  max-width:min(600px,calc(100vw - 32px));display:flex;flex-direction:column;gap:10px}
+.eyebrow{font:500 10.5px/1.2 var(--sans);letter-spacing:.3em;text-transform:uppercase;color:var(--soft)}
+h1{margin:0;font:italic 400 clamp(25px,3.3vw,42px)/1.1 var(--serif);letter-spacing:.004em;
+  color:var(--ink);text-wrap:balance}
+h1 .k{color:var(--gold);font-style:italic}
+.eq{margin:0;font:400 clamp(14.5px,1.35vw,17px)/1.45 var(--serif);color:var(--soft)}
+.eq i{color:var(--ink)}
+.facts{margin:0;font:400 11px/1.6 var(--mono);color:var(--faint);letter-spacing:.02em}
+.link{pointer-events:auto;align-self:flex-start;margin-top:2px;padding:6px 0;border:0;background:none;cursor:pointer;
+  font:500 11px/1 var(--sans);letter-spacing:.2em;text-transform:uppercase;color:var(--soft);
+  border-bottom:1px solid var(--faint);transition:color .3s,border-color .3s}
+.link:hover{color:var(--gold);border-color:var(--gold-line)}
+.link:focus-visible,#knots button:focus-visible{outline:1px solid var(--gold);outline-offset:3px}
+
+#about{pointer-events:auto;max-width:460px;margin-top:6px;padding:16px 18px 6px;border:1px solid var(--glass-line);
+  border-radius:12px;background:var(--glass);-webkit-backdrop-filter:blur(14px) saturate(1.2);backdrop-filter:blur(14px) saturate(1.2);
+  font:400 14px/1.62 var(--serif);color:var(--soft);max-height:52vh;overflow:auto}
+#about p{margin:0 0 12px}
+#about i,#about b{color:var(--ink);font-weight:400}
+#about[hidden]{display:none}
+
+#knots{bottom:calc(var(--edge) + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);
+  display:flex;flex-wrap:wrap;justify-content:center;gap:4px;width:max-content;max-width:calc(100vw - 32px)}
+#knots button{pointer-events:auto;cursor:pointer;padding:9px 13px;border-radius:999px;border:1px solid transparent;
+  background:transparent;color:var(--soft);font:500 12px/1 var(--sans);letter-spacing:.05em;
+  transition:color .35s,border-color .35s,background .35s}
+#knots button:hover{color:var(--ink);border-color:var(--glass-line)}
+#knots button[aria-pressed="true"]{color:var(--gold);border-color:var(--gold-line);background:var(--gold-wash)}
+#knots button small{font:400 10px/1 var(--mono);opacity:.6;margin-left:6px;letter-spacing:0}
+
+#readout{left:var(--edge);bottom:calc(var(--edge) + env(safe-area-inset-bottom,0px));
+  font:400 11px/1.75 var(--mono);color:var(--faint);white-space:pre;font-variant-numeric:tabular-nums}
+#hint{right:var(--edge);top:calc(var(--edge) + env(safe-area-inset-top,0px));text-align:right;
+  font:400 11px/1.75 var(--sans);color:var(--faint);letter-spacing:.03em}
+#hint b{font-weight:500;color:var(--soft)}
+
+#fail{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:32px;
+  font:400 16px/1.6 var(--serif);color:var(--soft);text-align:center}
+#fail[hidden]{display:none}
+#fail pre{font:11px/1.5 var(--mono);text-align:left;white-space:pre-wrap;color:var(--faint);max-width:760px}
+
+@media (max-width:980px){ #hint{display:none} }
+@media (max-width:720px){
+  #readout{display:none}
+  .facts{display:none}
+  #knots button{padding:8px 10px;font-size:11.5px}
+  #knots button small{display:none}
+}
+@media (prefers-reduced-motion:reduce){ .ui{transition:none} }
+</style>
+</head>
+<body>
+<canvas id="c" role="img" aria-label="Iridescent soap-film surfaces fanning around a glowing knotted wire: the pages of a Milnor fibration, turning slowly."></canvas>
+
+<header class="ui" id="title">
+  <div class="eyebrow">Open Book &nbsp;·&nbsp; a Milnor fibration</div>
+  <h1>The <span class="k" id="kname">trefoil</span> as the spine of an open book</h1>
+  <p class="eq" id="eq"></p>
+  <p class="facts" id="facts"></p>
+  <button class="link" id="aboutBtn" type="button" aria-expanded="false" aria-controls="about">About the mathematics</button>
+  <div id="about" hidden></div>
+</header>
+
+<nav class="ui" id="knots" aria-label="Choose the knot"></nav>
+<div class="ui" id="readout" aria-live="off"></div>
+<div class="ui" id="hint">
+  <b>move</b> rotate S³ inside ℝ⁴<br>
+  <b>drag</b> orbit &nbsp;·&nbsp; <b>scroll</b> zoom<br>
+  <b>click</b> next knot &nbsp;·&nbsp; <b>space</b> pause &nbsp;·&nbsp; <b>+ −</b> pages &nbsp;·&nbsp; <b>h</b> hide
+</div>
+<div id="fail" hidden></div>
+
+<script id="fs-march" type="x-shader/x-fragment">
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+
+uniform vec2  uRes;
+uniform float uTime;
+uniform float uTheta;   // angle of page 0
+uniform float uPages;   // number of pages drawn
+uniform vec3  uCam;
+uniform vec3  uRight;
+uniform vec3  uUp;
+uniform vec3  uFwd;
+uniform float uFocal;
+uniform mat4  uRot;     // rotation of S3 inside R4
+uniform vec4  uPQ;      // (p,q) of the knot, (p,q) of the morph target
+uniform float uMix;     // morph progress
+uniform vec3  uKey;     // softbox directions (world)
+uniform vec3  uFill;
+uniform float uWire;    // wire radius
+uniform float uFade;    // intro
+uniform float uExpo;    // exposure: lower once the camera is inside the films
+
+const float TAU = 6.28318530718;
+
+vec2 cmul(vec2 a, vec2 b){ return vec2(a.x*b.x - a.y*b.y, a.x*b.y + a.y*b.x); }
+vec2 cdiv(vec2 a, vec2 b){ return vec2(a.x*b.x + a.y*b.y, a.y*b.x - a.x*b.y) / max(dot(b, b), 1e-30); }
+
+// zn = z^n, zm = z^(n-1) for integer n in [1,8]
+void cpw(vec2 z, float n, out vec2 zn, out vec2 zm){
+  vec2 r = vec2(1.0, 0.0);
+  for (int i = 1; i < 8; i++){
+    if (float(i) > n - 0.5) break;
+    r = cmul(r, z);
+  }
+  zm = r;
+  zn = cmul(r, z);
+}
+
+// Inverse stereographic projection R3 -> S3, rotate in R4, evaluate F = z^p + w^q
+// and its complex partials. lam is the conformal factor of the projection.
+void field(vec3 P, out vec2 F, out vec2 Fz, out vec2 Fw, out vec4 X, out float lam){
+  float r2 = dot(P, P);
+  float inv = 1.0 / (1.0 + r2);
+  lam = 2.0 * inv;
+  X = uRot * vec4(2.0 * P * inv, (r2 - 1.0) * inv);
+  vec2 a, am, b, bm;
+  cpw(X.xy, uPQ.x, a, am);
+  cpw(X.zw, uPQ.y, b, bm);
+  F = a + b; Fz = uPQ.x * am; Fw = uPQ.y * bm;
+  if (uMix > 0.0){
+    vec2 c, cm, d, dm;
+    cpw(X.xy, uPQ.z, c, cm);
+    cpw(X.zw, uPQ.w, d, dm);
+    F  = mix(F,  c + d,      uMix);
+    Fz = mix(Fz, uPQ.z * cm, uMix);
+    Fw = mix(Fw, uPQ.w * dm, uMix);
+  }
+}
+
+// Pull a gradient on R4 (in rotated coordinates) back to R3 through the rotation
+// and the stereographic projection.
+vec3 pullback(vec4 g, vec3 P){
+  vec4 gy = g * uRot;
+  float inv = 1.0 / (1.0 + dot(P, P));
+  return 2.0 * inv * gy.xyz + 4.0 * inv * inv * P * (gy.w - dot(gy.xyz, P));
+}
+
+float bump(float x){ x = clamp(x, -1.0, 1.0); x = 1.0 - x * x; return x * x; }
+
+// Thin-film interference of a soap film (n = 1.33) of thickness d nm,
+// integrated over the visible spectrum into RGB.
+vec3 filmColor(float d, float cosi){
+  float ct = sqrt(max(0.0, 1.0 - (1.0 - cosi * cosi) * 0.5653));
+  float opd = 2.66 * d * ct;
+  vec3 s = vec3(0.0), ws = vec3(0.0);
+  for (int i = 0; i < 12; i++){
+    float lam = 405.0 + 25.0 * float(i);
+    vec3 w = vec3(bump((lam - 602.0) / 70.0) + 0.3 * bump((lam - 445.0) / 35.0),
+                  bump((lam - 545.0) / 62.0),
+                  bump((lam - 452.0) / 48.0));
+    s  += w * (0.5 - 0.5 * cos(TAU * opd / lam));
+    ws += w;
+  }
+  return 2.0 * s / ws;
+}
+
+// A dark studio: warm key softbox, cool strip light, violet horizon.
+vec3 env(vec3 r){
+  vec3 c = mix(vec3(0.010, 0.010, 0.024), vec3(0.030, 0.034, 0.072), 0.5 + 0.5 * r.y);
+  float k = dot(r, uKey);
+  c += vec3(1.00, 0.92, 0.82) * (3.4 * smoothstep(0.962, 0.992, k) + 0.34 * pow(max(k, 0.0), 10.0));
+  float f = dot(r, uFill);
+  c += vec3(0.50, 0.70, 1.00) * (2.1 * smoothstep(0.935, 0.975, f) + 0.20 * pow(max(f, 0.0), 6.0));
+  c += vec3(0.55, 0.30, 0.85) * 0.38 * exp(-8.0 * (r.y - 0.15) * (r.y - 0.15));
+  return c;
+}
+
+float hash12(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+
+void main(){
+  vec2 uv = (2.0 * gl_FragCoord.xy - uRes) / min(uRes.x, uRes.y);   // fit the lens to the shorter edge
+  vec3 rd = normalize(uRight * uv.x + uUp * uv.y + uFwd * uFocal);
+  vec3 ro = uCam;
+
+  vec3 col = vec3(0.0);
+  float T = 1.0;
+  float glowC = 0.0, glowA = 0.0;
+
+  const float RB = 5.2;
+  float b = dot(ro, rd);
+  float h = b * b - dot(ro, ro) + RB * RB;
+  if (h > 0.0){
+    h = sqrt(h);
+    float t = max(0.0, -b - h);
+    float tEnd = -b + h;
+    float spacing = TAU / uPages;
+    vec2 F, Fz, Fw; vec4 X; float lam;
+    vec3 P = ro + rd * t;
+    field(P, F, Fz, Fw, X, lam);
+    float psi = atan(F.y, F.x);           // unwrapped arg F along the ray
+    vec2 Fp = F; vec3 Pp = P;
+    float jit = hash12(gl_FragCoord.xy);
+
+    for (int i = 0; i < 260; i++){
+      // |F| / |grad F| estimates the distance to the knot on S3; divide by lam for R3.
+      float gn = sqrt(dot(Fz, Fz) + dot(Fw, Fw));
+      float d = length(F) / max(gn * lam, 1e-9);
+
+      if (d < uWire){
+        vec2 u = cdiv(Fz, F), v = cdiv(Fw, F);
+        vec3 nw = normalize(pullback(vec4(u.x, -u.y, v.x, -v.y), P));   // grad log|F|
+        float facing = abs(dot(nw, rd));
+        float pulse = 0.5 + 0.5 * sin(atan(X.y, X.x) + atan(X.w, X.z) - 2.2 * uTime);
+        vec3 hot = mix(vec3(1.0, 0.40, 0.14), vec3(1.0, 0.93, 0.80), facing * facing);
+        col += T * hot * (0.8 + 2.6 * facing) * (0.72 + 0.5 * pulse);
+        T = 0.0;
+        break;
+      }
+
+      // Step so that arg F changes by less than half a page: pages are never skipped.
+      float dt = clamp(0.4 * spacing * d, 0.0006, mix(0.065, 0.3, smoothstep(2.2, 4.2, length(P))));
+      if (i == 0) dt *= 0.25 + 0.75 * jit;
+
+      float xc = d / 0.05, xa = d / 0.34;
+      glowC += T * dt / (0.05 * (1.0 + xc * xc) * (1.0 + xc * xc));
+      glowA += T * dt / (0.34 * (1.0 + xa * xa));
+
+      t += dt;
+      if (t > tEnd || T < 0.02) break;
+      P = ro + rd * t;
+      field(P, F, Fz, Fw, X, lam);
+
+      float psiN = psi + atan(Fp.x * F.y - Fp.y * F.x, dot(Fp, F));
+      float k0 = floor((psi  - uTheta) / spacing);
+      float k1 = floor((psiN - uTheta) / spacing);
+      if (k0 != k1){
+        // crossed the page arg F = uTheta + kk * spacing
+        float kk = max(k0, k1);
+        float f = clamp((uTheta + kk * spacing - psi) / (psiN - psi), 0.0, 1.0);
+        vec3 H = mix(Pp, P, f);
+        vec2 hF, hFz, hFw; vec4 hX; float hl;
+        field(H, hF, hFz, hFw, hX, hl);
+        vec2 u = cdiv(hFz, hF), v = cdiv(hFw, hF);
+        vec3 n = normalize(pullback(vec4(u.y, u.x, v.y, v.x), H));      // grad arg F
+        float cosi = dot(n, rd);
+        if (cosi > 0.0) n = -n;
+        cosi = abs(cosi);
+
+        float r = length(H);
+        float mz = length(hX.xy), mw = length(hX.zw);
+        float rho = clamp(log(max(mz, 1e-4) / max(mw, 1e-4)), -3.0, 3.0);
+        float ez = hX.x / max(mz, 1e-4);
+        float kIdx = mod(kk, uPages);
+        float hd = length(hF) / max(sqrt(dot(hFz, hFz) + dot(hFw, hFw)) * hl, 1e-9);
+
+        // film thickness (nm): drifting bands, a different phase per page, a thick meniscus at the wire
+        float thick = 170.0 + 400.0 * (0.5 + 0.5 * sin(2.1 * rho - 0.30 * uTime + kIdx * 2.39996))
+                    + 60.0 * sin(4.0 * rho + 1.7 * ez + 0.23 * uTime + kIdx)
+                    + 170.0 * exp(-hd / 0.10);
+        vec3 fc = filmColor(thick, cosi);
+        fc = max(mix(vec3(dot(fc, vec3(0.3333))), fc, 1.4), 0.0);
+        float fr = pow(1.0 - cosi, 3.0);
+        float wl = 1.0 / (1.0 + (hd / 0.32) * (hd / 0.32));
+        vec3 rad = fc * (env(reflect(rd, n)) * (0.2 + 0.8 * fr) + vec3(1.0, 0.66, 0.36) * 0.8 * wl + 0.016);
+        float fade = exp(-pow(max(r - 2.2, 0.0) * 0.95, 2.0)) * smoothstep(0.25, 1.6, t);
+        float a = (0.055 + 0.6 * fr) * fade;
+        col += T * a * rad;
+        T *= 1.0 - 0.75 * a;
+      }
+      psi = psiN; Fp = F; Pp = P;
+    }
+  }
+
+  col += vec3(1.0, 0.62, 0.30) * glowC * 0.4 + vec3(1.0, 0.50, 0.40) * glowA * 0.032;
+
+  float vg = smoothstep(2.4, 0.1, length(uv));
+  vec2 q = uv - vec2(0.35, -0.25);
+  vec3 bg = vec3(0.004, 0.004, 0.011) + vec3(0.020, 0.016, 0.044) * vg
+          + vec3(0.030, 0.010, 0.032) * exp(-1.6 * dot(q, q));
+  col += T * bg;
+
+  col = aces(col * uExpo) * uFade;
+  col = pow(col, vec3(1.0 / 2.2));
+  col += (hash12(gl_FragCoord.xy + 0.37) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}
+</script>
+
+<script id="vs-quad" type="x-shader/x-vertex">
+attribute vec2 aPos;
+void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }
+</script>
+
+<script id="vs-sparks" type="x-shader/x-vertex">
+attribute vec4 aP;          // (eta, arg z, arg w, seed) on S3, sampled on a page
+uniform mat4  uRot;
+uniform vec3  uCam;
+uniform vec3  uRight;
+uniform vec3  uUp;
+uniform vec3  uFwd;
+uniform float uFocal;
+uniform vec2  uNdc;         // min(W,H) / (W,H): same lens as the march
+uniform float uS;           // circle-action parameter
+uniform float uTime;
+uniform float uAlpha;
+uniform float uPx;
+uniform vec2  uPQ;
+varying vec3 vCol;
+void main(){
+  // (z, w) -> (e^{iqs} z, e^{ips} w) multiplies z^p + w^q by e^{ipqs}: it carries pages onto pages.
+  float ce = cos(aP.x), se = sin(aP.x);
+  float pz = aP.y + uPQ.y * uS;
+  float pw = aP.z + uPQ.x * uS;
+  vec4 X = vec4(ce * cos(pz), ce * sin(pz), se * cos(pw), se * sin(pw));
+  vec4 Y = X * uRot;
+  vec3 P = Y.xyz / max(1.0 - Y.w, 1e-3);
+  vec3 q = P - uCam;
+  float zc = dot(q, uFwd);
+  float r = length(P);
+  float ph = fract(aP.w * 13.37);
+  float fade = exp(-pow(max(r - 2.4, 0.0) * 0.8, 2.0)) * smoothstep(0.7, 2.4, zc);
+  float tw = 0.3 + 0.7 * pow(0.5 + 0.5 * sin(uTime * (0.7 + 2.3 * ph) + aP.w * 61.0), 3.0);
+  vCol = mix(vec3(1.0, 0.80, 0.52), vec3(0.76, 0.87, 1.0), fract(aP.w * 5.1)) * fade * tw * uAlpha;
+  gl_Position = vec4(dot(q, uRight) * uFocal * uNdc.x, dot(q, uUp) * uFocal * uNdc.y, 0.0, zc);
+  gl_PointSize = clamp(uPx * (0.55 + 1.6 * ph * ph) / max(zc, 0.1), 1.0, 28.0);
+}
+</script>
+
+<script id="fs-sparks" type="x-shader/x-fragment">
+precision mediump float;
+varying vec3 vCol;
+void main(){
+  vec2 c = gl_PointCoord * 2.0 - 1.0;
+  float r2 = dot(c, c);
+  if (r2 > 1.0) discard;
+  float a = 0.85 * exp(-r2 * 6.0) + 0.8 * exp(-r2 * 42.0);
+  gl_FragColor = vec4(vCol * a, 1.0);
+}
+</script>
+
+<script>
+(() => {
+  'use strict';
+  const TAU = Math.PI * 2;
+  const $ = s => document.querySelector(s);
+  const canvas = $('#c');
+
+  function fail(msg, detail){
+    const el = $('#fail');
+    el.hidden = false;
+    el.innerHTML = '<div><p>' + msg + '</p>' + (detail ? '<pre></pre>' : '') + '</div>';
+    if (detail) el.querySelector('pre').textContent = detail;
+  }
+
+  // ---------- the knots: links of the singularities z^p + w^q = 0 ----------
+  const KNOTS = [
+    { p:2, q:3, name:'trefoil',           chip:'Trefoil',    tag:'3₁' },
+    { p:2, q:5, name:'cinquefoil',        chip:'Cinquefoil', tag:'5₁' },
+    { p:3, q:4, name:'torus knot T(3,4)', chip:'T(3,4)',     tag:'8₁₉' },
+    { p:2, q:2, name:'Hopf link',         chip:'Hopf link',  tag:'L2a1' },
+    { p:3, q:3, name:'torus link T(3,3)', chip:'T(3,3)',     tag:'3 loops' },
+    { p:2, q:7, name:'septafoil',         chip:'Septafoil',  tag:'7₁' },
+  ];
+  const gcd = (a, b) => b ? gcd(b, a % b) : a;
+  const lcm = (a, b) => a * b / gcd(a, b);
+  const SUP = { '0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹','-':'⁻' };
+  const sup = n => String(n).split('').map(c => SUP[c] || c).join('');
+
+  // ---------- WebGL ----------
+  const attrs = { antialias:false, alpha:false, depth:false, stencil:false, premultipliedAlpha:false,
+                  preserveDrawingBuffer:false, powerPreference:'high-performance' };
+  const gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+  if (!gl){
+    fail('This piece is drawn with WebGL, which this browser has turned off or does not provide. Turn on hardware acceleration, or open it in a current Chrome, Firefox, Safari or Edge.');
+    return;
+  }
+
+  function compile(type, id){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, document.getElementById(id).textContent);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS) && !gl.isContextLost())
+      throw new Error(id + ': ' + gl.getShaderInfoLog(s));
+    return s;
+  }
+  function program(vsId, fsId, attrib){
+    const p = gl.createProgram();
+    gl.attachShader(p, compile(gl.VERTEX_SHADER, vsId));
+    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsId));
+    gl.bindAttribLocation(p, 0, attrib);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS) && !gl.isContextLost())
+      throw new Error('link: ' + gl.getProgramInfoLog(p));
+    return p;
+  }
+  const locs = (p, names) => Object.fromEntries(names.map(n => [n, gl.getUniformLocation(p, n)]));
+
+  let march, sparks, UM, US;
+  try {
+    march  = program('vs-quad', 'fs-march', 'aPos');
+    sparks = program('vs-sparks', 'fs-sparks', 'aP');
+  } catch (e){
+    fail('The shaders did not compile on this graphics driver.', String(e.message || e));
+    return;
+  }
+  UM = locs(march, ['uRes','uTime','uTheta','uPages','uCam','uRight','uUp','uFwd','uFocal','uRot','uPQ','uMix','uKey','uFill','uWire','uFade','uExpo']);
+  US = locs(sparks, ['uRot','uCam','uRight','uUp','uFwd','uFocal','uNdc','uS','uTime','uAlpha','uPx','uPQ']);
+
+  const quad = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+
+  const NP = 4200;
+  const sparkBuf = gl.createBuffer();
+  let sparkCount = 0;
+  gl.enableVertexAttribArray(0);
+
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => location.reload());
+
+  // ---------- 4x4 rotations of R4 (column-major, as WebGL wants) ----------
+  const ident = () => { const m = new Float32Array(16); m[0] = m[5] = m[10] = m[15] = 1; return m; };
+  function plane(i, j, a){
+    const m = ident(), c = Math.cos(a), s = Math.sin(a);
+    m[i * 4 + i] = c; m[j * 4 + j] = c; m[j * 4 + i] = -s; m[i * 4 + j] = s;
+    return m;
+  }
+  function mul(a, b){
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++){
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
+      o[c * 4 + r] = s;
+    }
+    return o;
+  }
+
+  // ---------- state ----------
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const HOME = { yaw: 0.42, pitch: 0.36, dist: 7.4 };
+  const S = {
+    yaw: HOME.yaw, pitch: HOME.pitch, dist: HOME.dist, distT: HOME.dist,
+    vyaw: 0, vpitch: 0,
+    hx: 0, hy: 0, hxT: 0, hyT: 0,
+    theta: 0.35, speed: reduced ? 0.05 : 0.15, paused: false,
+    pages: 7,
+    cur: 0, nxt: -1, mt: 0,
+    spark: 0, sparkT: 1, sparkTheta0: 0,
+    lastInput: -1e9,
+  };
+
+  // Scatter sparks exactly on the pages arg(z^p + w^q) = theta + 2 pi k / N.
+  function sampleSparks(){
+    const { p, q } = KNOTS[S.cur];
+    const N = S.pages, th0 = S.theta;
+    const out = new Float32Array(NP * 4);
+    let n = 0, guard = 0;
+    while (n < NP && guard++ < NP * 400){
+      const u = Math.random();
+      const ce = Math.sqrt(u), se = Math.sqrt(1 - u);         // |z|^2 uniform: the round measure on S3
+      const alpha = Math.random() * TAU;
+      const th = th0 + TAU * Math.floor(Math.random() * N) / N;
+      const Am = Math.pow(ce, p), Aph = p * alpha - th;
+      const Ar = Am * Math.cos(Aph), Ai = Am * Math.sin(Aph);
+      const B = Math.pow(se, q);
+      if (B < 1e-6 || Math.abs(Ai) > B) continue;
+      let g = Math.asin(-Ai / B);                                // Im(A e^{-i th} + B e^{ig}) = 0
+      if (Math.random() < 0.5) g = Math.PI - g;
+      if (Ar + B * Math.cos(g) <= 0){ g = Math.PI - g; if (Ar + B * Math.cos(g) <= 0) continue; }
+      const beta = (g + th + TAU * Math.floor(Math.random() * q)) / q;
+      // the round measure piles up at the origin of R3 (density ~ (1 + r^2)^-3): thin it there
+      const x4 = se * Math.sin(beta), r2 = (1 + x4) / Math.max(1e-6, 1 - x4);
+      if (Math.random() > Math.min(1, Math.pow((1 + r2) / 2.6, 2))) continue;
+      out[n * 4] = Math.atan2(se, ce); out[n * 4 + 1] = alpha; out[n * 4 + 2] = beta; out[n * 4 + 3] = Math.random();
+      n++;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, sparkBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, out, gl.DYNAMIC_DRAW);
+    sparkCount = n;
+    S.sparkTheta0 = th0;
+  }
+
+  // ---------- text ----------
+  const chips = $('#knots');
+  KNOTS.forEach((K, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.innerHTML = K.chip + '<small>' + K.tag + '</small>';
+    b.setAttribute('aria-pressed', String(i === 0));
+    b.title = 'arg(z' + sup(K.p) + ' + w' + sup(K.q) + ')   —  key ' + (i + 1);
+    b.addEventListener('click', e => { e.stopPropagation(); selectKnot(i); });
+    chips.appendChild(b);
+  });
+
+  function describe(i){
+    const K = KNOTS[i], p = K.p, q = K.q;
+    const r = gcd(p, q), mu = (p - 1) * (q - 1), g = (1 + mu - r) / 2, L = lcm(p, q);
+    $('#kname').textContent = K.name;
+    $('#eq').innerHTML = 'arg(<i>z</i>' + sup(p) + ' + <i>w</i>' + sup(q) + ') = <i>θ</i> &nbsp;on&nbsp; |<i>z</i>|² + |<i>w</i>|² = 1';
+    $('#facts').textContent = 'fibre: genus ' + g + (r > 1 ? ', ' + r + ' boundary circles' : ' Seifert surface') +
+      '  ·  Milnor number μ = ' + mu + '  ·  monodromy of order ' + L;
+    const what = r > 1 ? 'a link of ' + r + ' circles, L' : 'a ' + K.name + ' knot, K';
+    $('#about').innerHTML =
+      '<p>On the unit sphere <i>S</i>³ = {|<i>z</i>|² + |<i>w</i>|² = 1} in ℂ², the curve <i>z</i>' + sup(p) + ' + <i>w</i>' + sup(q) +
+      ' = 0 cuts out ' + what + '. Milnor proved (1968) that <i>θ</i> = arg(<i>z</i>' + sup(p) + ' + <i>w</i>' + sup(q) +
+      ') makes the complement fibre over the circle: every level set is a surface whose whole boundary is the knot, a soap film on a knotted wire. ' +
+      'Here <span class="np">' + S.pages + '</span> of those fibres are carried into ℝ³ by stereographic projection. The knot becomes the spine of an open book whose pages never stop turning.</p>' +
+      '<p>The sparks ride the circle action (<i>z</i>, <i>w</i>) ↦ (<i>e</i><sup>' + q + '<i>is</i></sup><i>z</i>, <i>e</i><sup>' + p + '<i>is</i></sup><i>w</i>). ' +
+      'It multiplies <i>z</i>' + sup(p) + ' + <i>w</i>' + sup(q) + ' by <i>e</i><sup>' + (p * q) + '<i>is</i></sup>, so it sweeps every page through all the others. ' +
+      'After one full turn each page is back where it started, but its points have been moved by the monodromy <i>h</i>, which has order ' + L + '. The sparks come home only after ' + L + ' turns.</p>' +
+      '<p>Moving the pointer rotates <i>S</i>³ inside ℝ⁴. Projection turns that rigid rotation into a conformal (Möbius) flow of space, which is why the films swell and bend and can slip out through infinity. ' +
+      'Film colours are thin-film interference, integrated across the visible spectrum for a film of water with index 1.33.</p>';
+    [...chips.children].forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
+  }
+
+  const aboutBtn = $('#aboutBtn'), about = $('#about');
+  function toggleAbout(force){
+    const show = typeof force === 'boolean' ? force : about.hidden;
+    about.hidden = !show;
+    aboutBtn.setAttribute('aria-expanded', String(show));
+    aboutBtn.textContent = show ? 'Close' : 'About the mathematics';
+  }
+  aboutBtn.addEventListener('click', e => { e.stopPropagation(); toggleAbout(); });
+
+  function selectKnot(i){
+    if (S.nxt >= 0){ S.cur = S.nxt; S.nxt = -1; S.mt = 0; }  // finish a morph in progress
+    if (i === S.cur){ describe(i); return; }
+    S.nxt = i; S.mt = 0; S.sparkT = 0;
+    describe(i);
+  }
+  function setPages(n){
+    S.pages = Math.max(2, Math.min(16, n));
+    const np = document.querySelector('#about .np');
+    if (np) np.textContent = S.pages;
+    if (S.nxt < 0) sampleSparks();
+  }
+  function resetView(){
+    S.yaw = HOME.yaw; S.pitch = HOME.pitch; S.distT = HOME.dist; S.vyaw = S.vpitch = 0;
+  }
+
+  // ---------- input ----------
+  const pointers = new Map();
+  let dragging = false, moved = 0, pinchD = 0, multi = false;
+  const touchDist = () => { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+
+  addEventListener('pointermove', e => {
+    if (e.pointerType === 'mouse'){
+      S.hxT = e.clientX / innerWidth * 2 - 1;
+      S.hyT = e.clientY / innerHeight * 2 - 1;
+    }
+    S.lastInput = performance.now();
+    const pt = pointers.get(e.pointerId);
+    if (!pt) return;
+    const dx = e.clientX - pt.x, dy = e.clientY - pt.y;
+    pt.x = e.clientX; pt.y = e.clientY;
+    if (pointers.size === 2){
+      const d = touchDist();
+      if (pinchD > 0) S.distT = Math.max(2.2, Math.min(16, S.distT * pinchD / d));
+      pinchD = d;
+    } else if (dragging){
+      moved += Math.abs(dx) + Math.abs(dy);
+      S.vyaw = -dx * 0.0055; S.vpitch = dy * 0.0045;
+      S.yaw += S.vyaw; S.pitch = Math.max(-1.35, Math.min(1.35, S.pitch + S.vpitch));
+    }
+  });
+  canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+    if (pointers.size === 1){ dragging = true; moved = 0; multi = false; S.vyaw = S.vpitch = 0; canvas.classList.add('drag'); }
+    else { dragging = false; multi = true; pinchD = touchDist(); }
+    S.lastInput = performance.now();
+  });
+  function endPointer(e){
+    if (!pointers.has(e.pointerId)) return;
+    pointers.delete(e.pointerId);
+    if (pointers.size === 0){
+      if (dragging && moved < 6 && !multi && e.type === 'pointerup')
+        selectKnot(((S.nxt >= 0 ? S.nxt : S.cur) + 1) % KNOTS.length);
+      dragging = false; canvas.classList.remove('drag');
+    }
+    if (pointers.size < 2) pinchD = 0;
+  }
+  canvas.addEventListener('pointerup', endPointer);
+  canvas.addEventListener('pointercancel', endPointer);
+  canvas.addEventListener('dblclick', e => { e.preventDefault(); resetView(); });
+  document.addEventListener('mouseleave', () => { S.hxT = 0; S.hyT = 0; });
+  addEventListener('wheel', e => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : 0.0012;
+    S.distT = Math.max(2.2, Math.min(16, S.distT * Math.exp(e.deltaY * k)));
+    S.lastInput = performance.now();
+  }, { passive: false });
+  addEventListener('keydown', e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (e.target instanceof HTMLButtonElement && (k === ' ' || k === 'Enter')) return;
+    if (k >= '1' && k <= String(KNOTS.length)) selectKnot(+k - 1);
+    else if (k === ' '){ S.paused = !S.paused; e.preventDefault(); }
+    else if (k === '+' || k === '=' || k === ']') setPages(S.pages + 1);
+    else if (k === '-' || k === '_' || k === '[') setPages(S.pages - 1);
+    else if (k === 'i' || k === 'I') toggleAbout();
+    else if (k === 'h' || k === 'H') document.body.classList.toggle('hide');
+    else if (k === 'r' || k === 'R') resetView();
+    else if (k === 'Escape') toggleAbout(false);
+    else return;
+    S.lastInput = performance.now();
+  });
+
+  // ---------- resolution: the march is heavy, so the render scale adapts to the GPU ----------
+  const DPR = Math.max(1, window.devicePixelRatio || 1);
+  const pinned = parseFloat(new URLSearchParams(location.search).get('res'));
+  let scale = pinned > 0 ? pinned : 0.62;
+  let ceiling = Math.min(DPR, 1.35);
+  const FLOOR = 0.3;
+  function resize(){
+    const w = Math.max(2, Math.round(innerWidth * scale)), h = Math.max(2, Math.round(innerHeight * scale));
+    if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+  }
+  addEventListener('resize', resize);
+  resize();
+  let fAcc = 0, fN = 0, fWarm = 0, lastDrop = -1e9;
+  function adapt(raw, now){
+    if (pinned > 0 || ++fWarm < 24) return;
+    fAcc += raw; fN++;
+    if (fN < 24) return;
+    const avg = fAcc / fN; fAcc = 0; fN = 0;
+    if (avg > 1 / 42 && scale > FLOOR){
+      ceiling = Math.min(ceiling, scale * 0.97);
+      scale = Math.max(FLOOR, scale * 0.84); lastDrop = now; resize();
+    } else if (avg < 1 / 56 && scale < ceiling && now - lastDrop > 2500){
+      scale = Math.min(ceiling, scale * 1.08); resize();
+    }
+  }
+
+  // ---------- frame ----------
+  describe(0);
+  sampleSparks();
+  const t0 = performance.now();
+  let last = t0, lastText = 0;
+  const readout = $('#readout');
+  const ease = x => x * x * (3 - 2 * x);
+  const norm = v => { const l = Math.hypot(v[0], v[1], v[2]); return [v[0] / l, v[1] / l, v[2] / l]; };
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const comb = (a, x, b, y, c, z) => [a[0] * x + b[0] * y + c[0] * z, a[1] * x + b[1] * y + c[1] * z, a[2] * x + b[2] * y + c[2] * z];
+
+  function frame(now){
+    if (gl.isContextLost()){ requestAnimationFrame(frame); return; }
+    const raw = Math.min(0.5, (now - last) / 1000);
+    const dt = Math.min(raw, 0.05);
+    last = now;
+    const t = (now - t0) / 1000;
+    adapt(raw, now);
+
+    if (!S.paused) S.theta += dt * S.speed;
+
+    // morph between knots
+    let mix = 0;
+    if (S.nxt >= 0){
+      S.mt += dt / 2.4;
+      if (S.mt >= 1){ S.cur = S.nxt; S.nxt = -1; S.mt = 0; sampleSparks(); S.sparkT = 1; }
+      else mix = ease(S.mt);
+    }
+    S.spark += (S.sparkT - S.spark) * (1 - Math.exp(-dt * (S.sparkT > S.spark ? 1.6 : 7)));
+
+    // camera
+    if (!dragging){
+      S.yaw += S.vyaw; S.pitch = Math.max(-1.35, Math.min(1.35, S.pitch + S.vpitch));
+      const damp = Math.exp(-dt * 3.2); S.vyaw *= damp; S.vpitch *= damp;
+      if (!reduced && now - S.lastInput > 5000) S.yaw += dt * 0.03;
+    }
+    S.dist += (S.distT - S.dist) * (1 - Math.exp(-dt * 6));
+    const k4 = 1 - Math.exp(-dt * 2.0);
+    S.hx += (S.hxT - S.hx) * k4; S.hy += (S.hyT - S.hy) * k4;
+
+    const yawV = S.yaw - 0.32 * S.hx;                                   // pointer parallax
+    const pitV = Math.max(-1.4, Math.min(1.4, S.pitch + 0.2 * S.hy));
+    const cp = Math.cos(pitV), sp = Math.sin(pitV);
+    const cam = [S.dist * cp * Math.sin(yawV), S.dist * sp, S.dist * cp * Math.cos(yawV)];
+    const fwd = norm([-cam[0], -cam[1], -cam[2]]);
+    const right = norm(cross(fwd, [0, 1, 0]));
+    const up = cross(right, fwd);
+    const key = norm(comb(fwd, -0.55, up, 0.62, right, -0.45 + 0.4 * S.hx));
+    const fill = norm(comb(fwd, -0.35, up, -0.30 - 0.25 * S.hy, right, 0.85));
+
+    // rotation of S3: the pointer tilts the sphere through the projection pole
+    const drift = reduced ? 0 : 1;
+    const R = mul(plane(0, 3, 0.44 * S.hx + drift * 0.11 * Math.sin(t * 0.071)),
+              mul(plane(1, 3, -0.38 * S.hy + drift * 0.10 * Math.sin(t * 0.053 + 1.3)),
+                  plane(2, 3, drift * 0.25 * Math.sin(t * 0.031 + 2.0))));
+
+    const A = KNOTS[S.cur], B = S.nxt >= 0 ? KNOTS[S.nxt] : A;
+    const W = canvas.width, H = canvas.height, focal = 1.9;
+    const fade = Math.min(1, t / 2.2);
+
+    gl.viewport(0, 0, W, H);
+    gl.disable(gl.BLEND);
+    gl.useProgram(march);
+    gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform2f(UM.uRes, W, H);
+    gl.uniform1f(UM.uTime, t);
+    gl.uniform1f(UM.uTheta, S.theta % TAU);
+    gl.uniform1f(UM.uPages, S.pages);
+    gl.uniform3fv(UM.uCam, cam);
+    gl.uniform3fv(UM.uRight, right);
+    gl.uniform3fv(UM.uUp, up);
+    gl.uniform3fv(UM.uFwd, fwd);
+    gl.uniform1f(UM.uFocal, focal);
+    gl.uniformMatrix4fv(UM.uRot, false, R);
+    gl.uniform4f(UM.uPQ, A.p, A.q, B.p, B.q);
+    gl.uniform1f(UM.uMix, mix);
+    gl.uniform3fv(UM.uKey, key);
+    gl.uniform3fv(UM.uFill, fill);
+    gl.uniform1f(UM.uWire, 0.021);
+    gl.uniform1f(UM.uFade, fade * fade * (3 - 2 * fade));
+    const inside = Math.min(1, Math.max(0, (S.dist - 2.4) / 4.2));
+    gl.uniform1f(UM.uExpo, 0.34 + 0.61 * inside * inside * (3 - 2 * inside));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+    if (S.spark > 0.01 && sparkCount > 0){
+      const K = KNOTS[S.cur];
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.useProgram(sparks);
+      gl.bindBuffer(gl.ARRAY_BUFFER, sparkBuf);
+      gl.vertexAttribPointer(0, 4, gl.FLOAT, false, 0, 0);
+      gl.uniformMatrix4fv(US.uRot, false, R);
+      gl.uniform3fv(US.uCam, cam);
+      gl.uniform3fv(US.uRight, right);
+      gl.uniform3fv(US.uUp, up);
+      gl.uniform3fv(US.uFwd, fwd);
+      gl.uniform1f(US.uFocal, focal);
+      gl.uniform2f(US.uNdc, Math.min(W, H) / W, Math.min(W, H) / H);
+      gl.uniform1f(US.uS, ((S.theta - S.sparkTheta0) / (K.p * K.q)) % TAU);
+      gl.uniform1f(US.uTime, t);
+      gl.uniform1f(US.uAlpha, S.spark * fade * 0.55);
+      gl.uniform1f(US.uPx, 0.028 * focal * Math.min(W, H) * 0.5);
+      gl.uniform2f(US.uPQ, K.p, K.q);
+      gl.drawArrays(gl.POINTS, 0, sparkCount);
+    }
+
+    if (now - lastText > 120){
+      lastText = now;
+      const K = KNOTS[S.nxt >= 0 ? S.nxt : S.cur], L = lcm(K.p, K.q);
+      const turns = Math.floor((S.theta - S.sparkTheta0) / TAU) % L;
+      readout.textContent =
+        'θ = ' + (S.theta % TAU).toFixed(3) + (S.paused ? '   paused' : '') + '\n' +
+        'monodromy  h' + sup(turns) + '   (h' + sup(L) + ' = id)\n' +
+        S.pages + ' pages';
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(now => { last = now; document.body.classList.add('ready'); frame(now); });
+})();
+</script>
+</body>
+</html>

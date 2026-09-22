@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="Six self-contained mathematical animations, each written by a different language model from the same prompt.">
+<title>HTML Experiment — six geometries</title>
+<style>
+  :root {
+    --ground: #090a0e;
+    --ground-2: #101218;
+    --ink: #f3efe6;
+    --soft: #b7b1a6;
+    --faint: #7d786f;
+    --line: rgba(243, 239, 230, 0.14);
+    --line-strong: rgba(243, 239, 230, 0.28);
+    --gold: #e4c9a0;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: "Gill Sans", "Avenir Next", "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --edge: clamp(18px, 4vw, 56px);
+    --measure: 1180px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  html, body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+  }
+  body {
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(900px 420px at 50% -10%, rgba(228, 201, 160, 0.07), transparent 70%),
+      linear-gradient(180deg, #0c0d12 0%, var(--ground) 28%);
+    z-index: -1;
+  }
+  a { color: inherit; }
+  img { max-width: 100%; }
+
+  .wrap {
+    width: min(var(--measure), calc(100% - var(--edge) * 2));
+    margin: 0 auto;
+  }
+
+  header.site {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 22px 0 0;
+  }
+  .mark {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .mark svg { display: block; }
+  .repo {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--soft);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+  }
+  .repo:hover, .repo:focus-visible { color: var(--ink); border-bottom-color: var(--gold); }
+
+  .hero { padding: clamp(48px, 8vw, 92px) 0 28px; }
+  .kicker {
+    margin: 0 0 18px;
+    font-size: 11px;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+  h1 {
+    margin: 0;
+    max-width: 16ch;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-style: italic;
+    font-size: clamp(46px, 7vw, 92px);
+    line-height: 0.92;
+    letter-spacing: -0.02em;
+  }
+  .dek {
+    margin: 28px 0 0;
+    max-width: 38rem;
+    font-family: var(--serif);
+    font-size: clamp(18px, 2vw, 22px);
+    line-height: 1.45;
+    color: var(--soft);
+  }
+  .dek strong { color: var(--ink); font-weight: 500; }
+
+  nav.toc {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin: 36px 0 0;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+  nav.toc a {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    text-decoration: none;
+    color: var(--soft);
+  }
+  nav.toc a span {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--faint);
+    margin-right: 6px;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--gold); }
+
+  .gallery {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 54px 28px;
+    padding: 18px 0 20px;
+  }
+  .piece {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    text-decoration: none;
+    color: inherit;
+    min-width: 0;
+  }
+  .piece figure {
+    margin: 0;
+    position: relative;
+    background: #05060a;
+    border: 1px solid var(--line);
+    line-height: 0;
+    overflow: hidden;
+  }
+  .piece img {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 10;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.7s ease, filter 0.7s ease;
+  }
+  .tick {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+  }
+  .open {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    padding: 6px 10px;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--ink);
+    background: rgba(8, 9, 13, 0.72);
+    border: 1px solid var(--line-strong);
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .piece:hover img, .piece:focus-visible img {
+    transform: scale(1.025);
+    filter: saturate(1.06) contrast(1.04);
+  }
+  .piece:hover .open, .piece:focus-visible .open,
+  .piece:hover figure, .piece:focus-visible figure {
+    border-color: rgba(228, 201, 160, 0.55);
+  }
+  .piece:hover .open, .piece:focus-visible .open {
+    opacity: 1;
+    transform: none;
+  }
+  .piece:focus-visible { outline: none; }
+  .piece:focus-visible figure {
+    outline: 1px solid var(--gold);
+    outline-offset: 4px;
+  }
+  .by {
+    margin: 0;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--soft);
+  }
+  .by .num {
+    font-family: var(--mono);
+    letter-spacing: 0.06em;
+    color: var(--gold);
+    margin-right: 8px;
+  }
+  .by .tok {
+    font-family: var(--mono);
+    letter-spacing: 0.02em;
+    text-transform: none;
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  .piece h2 {
+    margin: 6px 0 0;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-style: italic;
+    font-size: clamp(26px, 2.4vw, 34px);
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+  }
+  .math {
+    margin: 8px 0 0;
+    max-width: 46ch;
+    color: var(--soft);
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  .file {
+    margin: 8px 0 0;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--faint);
+  }
+
+  .prompt {
+    margin-top: 28px;
+    padding: 42px 0 18px;
+    border-top: 1px solid var(--line);
+  }
+  .prompt h2, .notes h2 {
+    margin: 0 0 16px;
+    font-family: var(--sans);
+    font-weight: 500;
+    font-style: normal;
+    font-size: 12px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--gold);
+  }
+  blockquote {
+    margin: 0;
+    max-width: 46rem;
+    font-family: var(--serif);
+    font-size: clamp(18px, 2vw, 23px);
+    line-height: 1.45;
+    color: var(--ink);
+  }
+  .notes { padding: 36px 0 8px; }
+  .notes p, .colophon p {
+    margin: 0 0 10px;
+    max-width: 44rem;
+    color: var(--soft);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 18px;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 12px 12px 0;
+    border-bottom: 1px solid var(--line);
+    vertical-align: baseline;
+  }
+  th {
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--faint);
+    font-weight: 500;
+  }
+  td a { text-decoration: none; border-bottom: 1px solid var(--line-strong); }
+  td a:hover { border-bottom-color: var(--gold); color: var(--gold); }
+  td.num, td.tok { font-family: var(--mono); font-size: 13px; color: var(--soft); white-space: nowrap; }
+  .colophon {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    flex-wrap: wrap;
+    padding: 28px 0 48px;
+    border-top: 1px solid var(--line);
+    margin-top: 28px;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  .colophon a { color: var(--soft); }
+
+  @media (max-width: 860px) {
+    .gallery { grid-template-columns: 1fr; gap: 42px; }
+    h1 { max-width: 12ch; }
+    .by { letter-spacing: 0.08em; }
+    th:nth-child(4), td:nth-child(4) { display: none; }
+    header.site { flex-wrap: wrap; row-gap: 10px; }
+    .repo { flex-basis: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .piece img, .open { transition: none; }
+    .piece:hover img, .piece:focus-visible img { transform: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="site">
+      <a class="mark" href="#top" id="top">
+        <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true">
+          <g fill="none" stroke="#e4c9a0" stroke-width="1.2">
+            <circle cx="11" cy="11" r="8.2" opacity="0.45"/>
+            <circle cx="11" cy="2.8" r="1.15" fill="#e4c9a0" stroke="none"/>
+            <circle cx="18.1" cy="6.9" r="1.15" fill="#f3efe6" stroke="none"/>
+            <circle cx="18.1" cy="15.1" r="1.15" fill="#f3efe6" stroke="none"/>
+            <circle cx="11" cy="19.2" r="1.15" fill="#e4c9a0" stroke="none"/>
+            <circle cx="3.9" cy="15.1" r="1.15" fill="#f3efe6" stroke="none"/>
+            <circle cx="3.9" cy="6.9" r="1.15" fill="#f3efe6" stroke="none"/>
+          </g>
+        </svg>
+        HTML Experiment
+      </a>
+      <a class="repo" href="https://github.com/MiaAI-Lab/HTML-Experiment">MiaAI-Lab / HTML-Experiment</a>
+    </header>
+
+    <section class="hero">
+      <p class="kicker">One prompt · six models</p>
+      <h1>Six geometries, none of them the obvious one.</h1>
+      <p class="dek">Each page is a self-contained animation, written by a different model from the same sentence. No libraries. The pointer, the scroll wheel, and a piece of mathematics that is actually doing the work. <strong>The stills below are the opening moment</strong> — the pages themselves move.</p>
+      <nav class="toc" aria-label="The six pages">
+        <a href="#open-book"><span>01</span>Open Book</a>
+        <a href="#elliptic"><span>02</span>Elliptic Relief</a>
+        <a href="#standard"><span>03</span>Standard Map</a>
+        <a href="#coxeter"><span>04</span>Coxeter Bloom</a>
+        <a href="#indra"><span>05</span>Indra’s Net</a>
+        <a href="#hopf"><span>06</span>Hopf</a>
+      </nav>
+    </section>
+
+    <main class="gallery">
+      <a class="piece" id="open-book" href="opus5-5_218k.html">
+        <figure>
+          <span class="tick" style="background:#e7c79a"></span>
+          <img src="screenshots/opus5-5_218k.png" width="1600" height="1000" alt="Iridescent soap-film pages fanning around a glowing trefoil knot on a black field.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">01</span>Claude Opus 5.5</span><span class="tok">218k output tokens</span></p>
+          <h2>Open Book</h2>
+          <p class="math">A Milnor open book. The trefoil is the spine; the pages are soap-film surfaces turning around the knot in the 3-sphere.</p>
+          <p class="file">opus5-5_218k.html</p>
+        </div>
+      </a>
+
+      <a class="piece" id="elliptic" href="grok4-7_194k.html">
+        <figure>
+          <span class="tick" style="background:#d9d3c7"></span>
+          <img src="screenshots/grok4-7_194k.png" width="1600" height="1000" alt="A silver and gold relief of the Weierstrass elliptic function, poles rising out of a dark lattice.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">02</span>Grok 4.7</span><span class="tok">194k output tokens</span></p>
+          <h2>Elliptic Relief</h2>
+          <p class="math">The Weierstrass ℘ function on a moving period lattice. Gold is the imaginary part, silver the real; height follows the real part, and the color winds twice at every pole.</p>
+          <p class="file">grok4-7_194k.html</p>
+        </div>
+      </a>
+
+      <a class="piece" id="standard" href="ds-4.1-flash_359k.html">
+        <figure>
+          <span class="tick" style="background:#8eb4e8"></span>
+          <img src="screenshots/ds-4.1-flash_359k.png" width="1600" height="1000" alt="A phase portrait of Chirikov’s standard map: nested curves in gold, green, and deep red.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">03</span>DeepSeek v4.1 Flash</span><span class="tok">359k output tokens</span></p>
+          <h2>Standard Map</h2>
+          <p class="math">Chirikov’s area-preserving twist map. Every orbit is colored by its own rotation number, so the KAM tori, the island chains, and the chaotic sea separate themselves.</p>
+          <p class="file">ds-4.1-flash_359k.html</p>
+        </div>
+      </a>
+
+      <a class="piece" id="coxeter" href="glm-5.3-flash_146k.html">
+        <figure>
+          <span class="tick" style="background:#e8c37a"></span>
+          <img src="screenshots/glm-5.3-flash_146k.png" width="1600" height="1000" alt="Eight concentric rings of golden points, the 240 roots of E8 projected into the Coxeter plane.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">04</span>GLM 5.3 Flash</span><span class="tok">146k output tokens</span></p>
+          <h2>The Coxeter Bloom</h2>
+          <p class="math">The 240 roots of E₈, seen through a moving 2-plane in eight dimensions. On the Coxeter plane they fall into eight concentric 30-gons.</p>
+          <p class="file">glm-5.3-flash_146k.html</p>
+        </div>
+      </a>
+
+      <a class="piece" id="indra" href="mimo-pro_216k.html">
+        <figure>
+          <span class="tick" style="background:#9aa6ff"></span>
+          <img src="screenshots/mimo-pro_216k.png" width="1600" height="1000" alt="Indra’s Net: nested circles of a Kleinian limit set packed along the rim of a bright disk.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">05</span>MiMo-V2.6-Pro</span><span class="tok">216k output tokens</span></p>
+          <h2>Indra’s Net</h2>
+          <p class="math">The limit set of a Kleinian reflection group: four inversions in mutually tangent circles, descended by scrolling into the packing.</p>
+          <p class="file">mimo-pro_216k.html</p>
+        </div>
+      </a>
+
+      <a class="piece" id="hopf" href="mimo-2.6-flash_182k.html">
+        <figure>
+          <span class="tick" style="background:#c9d4ff"></span>
+          <img src="screenshots/mimo-2.6-flash_182k.png" width="1600" height="1000" alt="Linked circles of a Hopf fibration, stereographically projected from the 3-sphere.">
+          <span class="open">Open</span>
+        </figure>
+        <div>
+          <p class="by"><span><span class="num">06</span>MiMo-V2.6-Flash</span><span class="tok">182k output tokens</span></p>
+          <h2>Hopf</h2>
+          <p class="math">The Hopf fibration. Circles that are linked inside the 3-sphere, drawn where the projection meets the screen.</p>
+          <p class="file">mimo-2.6-flash_182k.html</p>
+        </div>
+      </a>
+    </main>
+
+    <section class="prompt">
+      <h2>The prompt, verbatim</h2>
+      <blockquote>write a self contained mimo-pro2.html page that contains a mouse responsive animation that a human viewer would consider stunning and beautiful. it must us e no outside libraries, be mouse responsive (zoom/scroll would be nice, too), work in any web browser, and be rooted in some form of high mathematics (not just random). make it absolutely stunning and make it unique, don't go with the first idea that pops into your head. make something no other LLM will make.</blockquote>
+    </section>
+
+    <section class="notes">
+      <h2>The six runs</h2>
+      <p>Output-token counts are the figures recorded for each generation. The pages share nothing but the prompt and the constraint of being a single HTML file.</p>
+      <table>
+        <thead>
+          <tr><th></th><th>Page</th><th>Model</th><th>Mathematics</th><th>Output</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="num">01</td>
+            <td><a href="opus5-5_218k.html">Open Book</a></td>
+            <td>Claude Opus 5.5</td>
+            <td>Milnor fibration of a knot</td>
+            <td class="tok">218k</td>
+          </tr>
+          <tr>
+            <td class="num">02</td>
+            <td><a href="grok4-7_194k.html">Elliptic Relief</a></td>
+            <td>Grok 4.7</td>
+            <td>Weierstrass ℘(z; τ)</td>
+            <td class="tok">194k</td>
+          </tr>
+          <tr>
+            <td class="num">03</td>
+            <td><a href="ds-4.1-flash_359k.html">Standard Map</a></td>
+            <td>DeepSeek v4.1 Flash</td>
+            <td>Chirikov standard map</td>
+            <td class="tok">359k</td>
+          </tr>
+          <tr>
+            <td class="num">04</td>
+            <td><a href="glm-5.3-flash_146k.html">The Coxeter Bloom</a></td>
+            <td>GLM 5.3 Flash</td>
+            <td>E₈ root system, Coxeter plane</td>
+            <td class="tok">146k</td>
+          </tr>
+          <tr>
+            <td class="num">05</td>
+            <td><a href="mimo-pro_216k.html">Indra’s Net</a></td>
+            <td>MiMo-V2.6-Pro</td>
+            <td>Kleinian limit set</td>
+            <td class="tok">216k</td>
+          </tr>
+          <tr>
+            <td class="num">06</td>
+            <td><a href="mimo-2.6-flash_182k.html">Hopf</a></td>
+            <td>MiMo-V2.6-Flash</td>
+            <td>Hopf fibration of S³</td>
+            <td class="tok">182k</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <footer class="colophon">
+      <p>MiaAI Lab · open any file on its own. Nothing to install, nothing loaded from elsewhere.</p>
+      <p><a href="https://github.com/MiaAI-Lab/HTML-Experiment">Source</a></p>
+    </footer>
+  </div>
+</body>
+</html>

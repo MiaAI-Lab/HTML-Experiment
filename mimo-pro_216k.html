@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Indra's Net — a Kleinian limit set</title>
+<style>
+  html,body{margin:0;height:100%;background:#02030a;overflow:hidden}
+  body{cursor:crosshair;color:#cfd6ff;
+    font-family:"Palatino Linotype",Palatino,"Book Antiqua","URW Palladio L",Georgia,serif}
+  canvas{position:fixed;inset:0;display:block;touch-action:none}
+  #hud,#read,#tips{pointer-events:none;text-shadow:0 0 14px #02030a,0 0 5px #02030a;
+    -webkit-user-select:none;user-select:none;transition:opacity 1.4s ease}
+  #hud{position:fixed;left:26px;top:20px;max-width:60vw}
+  #hud h1{margin:0;font-weight:400;font-size:21px;letter-spacing:.24em;color:#eef1ff}
+  #hud .eq{margin-top:12px;font-size:13.5px;line-height:1.7;font-style:italic;opacity:.76}
+  #hud .eq b{font-weight:400;font-style:normal;opacity:.96}
+  #read{position:fixed;right:26px;top:22px;text-align:right;font-size:11.5px;
+    letter-spacing:.09em;line-height:1.9;opacity:.6;font-variant-numeric:tabular-nums}
+  #tips{position:fixed;left:0;right:0;bottom:18px;text-align:center;font-size:12.5px;
+    letter-spacing:.12em;opacity:.48;font-style:italic}
+  .dim{opacity:.14 !important}
+  #nope{position:fixed;inset:0;display:none;place-items:center;text-align:center;
+    padding:8vh;font-size:15px;line-height:1.9;background:radial-gradient(120% 120% at 50% 40%,#0b1030 0%,#02030a 70%)}
+</style>
+</head>
+<body>
+<canvas id="sky"></canvas>
+<div id="hud">
+  <h1>INDRA&rsquo;S NET</h1>
+  <div class="eq">
+    &Lambda;(&Gamma;) &mdash; the limit set of a Kleinian reflection group<br>
+    <b>&Gamma; = &lang;&sigma;<sub>1</sub>, &sigma;<sub>2</sub>, &sigma;<sub>3</sub>, &sigma;<sub>4</sub>&rang;</b>
+    &middot; four inversions in touching circles &middot; <i>k</i> = (&minus;1,&thinsp;2,&thinsp;2,&thinsp;3)<br>
+    Descartes: (&Sigma;<i>k<sub>i</sub></i>)&sup2; = 2&Sigma;<i>k<sub>i</sub></i>&sup2; = 36
+  </div>
+</div>
+<div id="read"><span id="rd"></span></div>
+<div id="tips">move &mdash; the packing is inverted in your circle &nbsp;&middot;&nbsp; scroll &mdash; descend &nbsp;&middot;&nbsp; drag &mdash; translate</div>
+<div id="nope"><div><b>Indra&rsquo;s Net</b><br>This page draws a live Kleinian limit set on a canvas,<br>and this browser offers none.</div></div>
+<script>
+(function(){
+'use strict';
+var TAU = 6.283185307179586;
+
+/* ---------------------------------------------------------- environment */
+var cv = document.getElementById('sky');
+var ctx = (cv.getContext && cv.getContext('2d')) || null;
+if(!ctx){ document.getElementById('nope').style.display='grid'; return; }
+var raf = window.requestAnimationFrame || function(f){ return setTimeout(function(){ f(+new Date()); }, 16); };
+
+/* =========================================================================
+   1. INVERSIVE GEOMETRY
+   A generalised circle is the zero set of   a(x^2+y^2) + b x + c y + d = 0,
+   encoded by the 4-vector v = (a, b, c, d).  Every inversion, translation,
+   scaling and rotation of the extended plane acts LINEARLY on v: a Kleinian
+   generator is a 4x4 matrix, and words in the generators are matrix products.
+   (Ported verbatim from the verified prototype algebra.)
+   ========================================================================= */
+function circle(x, y, r){ return [1, -2*x, -2*y, x*x + y*y - r*r]; }
+function mm(A, B){                       /* 4x4 x 4x4, row major */
+  var M = [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0], i, j, k;
+  for(i = 0; i < 4; i++) for(k = 0; k < 4; k++){
+    var a = A[i*4 + k]; if(a === 0) continue;
+    for(j = 0; j < 4; j++) M[i*4 + j] += a * B[k*4 + j];
+  }
+  return M;
+}
+function mv(M, v){                       /* 4x4 x 4-vector */
+  return [M[0]*v[0] + M[1]*v[1] + M[2]*v[2] + M[3]*v[3],
+          M[4]*v[0] + M[5]*v[1] + M[6]*v[2] + M[7]*v[3],
+          M[8]*v[0] + M[9]*v[1] + M[10]*v[2] + M[11]*v[3],
+          M[12]*v[0] + M[13]*v[1] + M[14]*v[2] + M[15]*v[3]];
+}
+function T(px, py){                      /* translate by -p on the equation */
+  return [1,0,0,0,  -2*px,1,0,0,  -2*py,0,1,0,  px*px+py*py,-px,-py,1];
+}
+function Sc(s){ return [1,0,0,0,  0,s,0,0,  0,0,s,0,  0,0,0,s*s]; }
+var INVU = [0,0,0,1,  0,1,0,0,  0,0,1,0,  1,0,0,0];   /* z -> 1/zbar */
+function mirrorMat(px, py, R){           /* reflection in circle (px,py,R) */
+  return mm(T(px, py), mm(Sc(R), mm(INVU, mm(Sc(1/R), T(-px, -py)))));
+}
+function toCR(v){                        /* (a,b,c,d) -> {x,y,r} or null */
+  var a = v[0], b = v[1], c = v[2], d = v[3];
+  var sc = Math.abs(b) + Math.abs(c) + Math.abs(d);
+  if(sc === 0 || Math.abs(a) < 1e-11 * sc) return null;     /* empty / line */
+  var rr = (b*b + c*c) / (4*a*a) - d/a;
+  if(rr <= 0) return null;
+  return {x: -b/(2*a), y: -c/(2*a), r: Math.sqrt(rr)};
+}
+function invPoint(px, py, cx, cy, cr){   /* inversion of a point in a circle */
+  var dx = px - cx, dy = py - cy, f = (cr*cr) / (dx*dx + dy*dy);
+  return [cx + dx*f, cy + dy*f];
+}
+function normKey(v){                     /* projective, sign-canonical key */
+  var n = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2] + v[3]*v[3]) || 1;
+  var w = [v[0]/n, v[1]/n, v[2]/n, v[3]/n], i;
+  for(i = 0; i < 4; i++) if(Math.abs(w[i]) > 1e-9){
+    if(w[i] < 0){ w[0] = -w[0]; w[1] = -w[1]; w[2] = -w[2]; w[3] = -w[3]; }
+    break;
+  }
+  return w[0].toFixed(6) + ',' + w[1].toFixed(6) + ',' + w[2].toFixed(6) + ',' + w[3].toFixed(6);
+}
+
+/* =========================================================================
+   2. THE GROUP  --  the Apollonian window: four mutually tangent circles
+   with curvatures k = (-1, 2, 2, 3).  Their orbit under Gamma is the
+   Apollonian packing; the closure of its tangency points is Lambda.
+   ========================================================================= */
+var MIRRORS = [ [ 0.0,  0.0,  1.0       ],
+                [-0.5,  0.0,  0.5       ],
+                [ 0.5,  0.0,  0.5       ],
+                [ 0.0,  2/3,  1/3       ] ];
+var HUEOFF = [0.37, -0.23, 0.17, 0.29];
+var PAL = [ [209,230,255], [158,189,255], [184,163,255], [255,168,219], [255,214,158], [168,242,242] ];
+
+function palIndex(h){ h = (h % 1 + 1) % 1; return h * PAL.length; }
+
+/* =========================================================================
+   3. ORBIT GENERATOR  (progressive, persistent)
+   Walks reduced words in the mirrors, keeping only circles that are at least
+   minR and meet the region.  For every child that is verified tangent to its
+   parent, the contact point is recorded: those kiss points lie on Lambda.
+   ========================================================================= */
+function Gen(region, minR){
+  this.need = region; this.minR = minR;
+  this.seen = Object.create(null);
+  this.out = [];            /* [x,y,r,hue,depth] flattened */
+  this.sparks = [];         /* kiss points [x,y] */
+  this.dust = [];           /* limit-set dust [x,y] */
+  this.gens = MIRRORS.map(function(m){ return mirrorMat(m[0], m[1], m[2]); });
+  this.stack = [];
+  for(var j = 0; j < MIRRORS.length; j++){
+    var m = MIRRORS[j];
+    this.stack.push([circle(m[0], m[1], m[2]), j, 0, 0.11*j, -1]);
+  }
+  /* seed quadruple is pairwise tangent: record those six kisses */
+  for(var i = 0; i < 4; i++) for(var k = i+1; k < 4; k++) this.kiss(circle.apply(null, MIRRORS[i]), circle.apply(null, MIRRORS[k]));
+  this.makeDust();
+  this.done = false;
+}
+Gen.prototype.kiss = function(v1, v2){
+  var c1 = toCR(v1), c2 = toCR(v2);
+  if(!c1 || !c2 || c1.r <= 0 || c2.r <= 0) return;
+  var dx = c2.x - c1.x, dy = c2.y - c1.y, d = Math.sqrt(dx*dx + dy*dy);
+  if(d < 1e-12) return;
+  var dev = Math.min(Math.abs(d - (c1.r + c2.r)), Math.abs(d - Math.abs(c1.r - c2.r)));
+  if(dev > 1e-6 * Math.max(1, c1.r)) return;               /* not a kiss */
+  var s = (Math.abs(Math.abs(c1.r - d) - c2.r) < Math.abs(Math.abs(c1.r + d) - c2.r)) ? 1 : -1;
+  this.sparks.push(c1.x + s*c1.r*dx/d, c1.y + s*c1.r*dy/d);
+};
+Gen.prototype.makeDust = function(){
+  /* Lambda is invariant under Gamma: push a point of Lambda - the attracting
+     fixed point of the loxodromic element s1 s2 - through random words. */
+  var z = [0.31, 0.17], m0 = MIRRORS[0], m1 = MIRRORS[1], i;
+  for(i = 0; i < 300; i++){
+    var q = invPoint(z[0], z[1], m1[0], m1[1], m1[2]);
+    z = invPoint(q[0], q[1], m0[0], m0[1], m0[2]);
+  }
+  var seed = 7;
+  function rnd(){ seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; }
+  for(i = 0; i < 1200; i++){
+    var w = z.slice(), last = -1;
+    for(var s2 = 0; s2 < 13; s2++){
+      var j = (rnd() * 4) | 0; if(j === last) j = (j + 1) & 3;
+      var m = MIRRORS[j];
+      w = invPoint(w[0], w[1], m[0], m[1], m[2]);
+      last = j;
+    }
+    if(isFinite(w[0]) && isFinite(w[1])) this.dust.push(w[0], w[1]);
+  }
+};
+Gen.prototype.step = function(ms){
+  if(this.done) return;
+  var t0 = +new Date();
+  var x0 = this.need[0], y0 = this.need[1], x1 = this.need[2], y1 = this.need[3];
+  var minR = this.minR, n = MIRRORS.length;
+  while(this.stack.length){
+    if(this.out.length > 60000){ this.done = true; break; }
+    if((+new Date()) - t0 > ms) return;
+    var it = this.stack.pop(), v = it[0], last = it[1], depth = it[2], hue = it[3], parent = it[4];
+    var c = toCR(v);
+    if(!c || c.r < minR) continue;
+    if(c.x + c.r < x0 || c.x - c.r > x1 || c.y + c.r < y0 || c.y - c.r > y1) continue;
+    var key = normKey(v);
+    if(this.seen[key]) continue;
+    this.seen[key] = 1;
+    var id = this.out.length / 6;
+    this.out.push(v[0], v[1], v[2], v[3], hue % 1, depth);
+    if(parent >= 0){
+      var p6 = parent * 6;
+      this.kiss([this.out[p6], this.out[p6+1], this.out[p6+2], this.out[p6+3]], v);
+    }
+    if(depth >= 26) continue;
+    for(var i = 0; i < n; i++){
+      if(i === last) continue;
+      var w = mv(this.gens[i], v);
+      if(w && isFinite(w[0]) && isFinite(w[3])) this.stack.push([w, i, depth + 1, hue + HUEOFF[i], id]);
+    }
+  }
+  this.done = true;
+};
+
+/* =========================================================================
+   4. SPRITES  --  a pearl ring: bright white rim, faint jewelled interior
+   ========================================================================= */
+var SS = 96;
+function ringSprite(rgb){
+  var s = document.createElement('canvas'); s.width = s.height = SS;
+  var x = s.getContext('2d');
+  var c = SS/2, t = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',';
+  var wr = Math.round(rgb[0]*0.4 + 255*0.6), wg = Math.round(rgb[1]*0.4 + 255*0.6), wb = Math.round(rgb[2]*0.4 + 255*0.6);
+  var w = 'rgba(' + wr + ',' + wg + ',' + wb + ',';
+  var gr = x.createRadialGradient(c, c, 0, c, c, c);
+  gr.addColorStop(0.00,  w + '0.035)');
+  gr.addColorStop(0.55,  t + '0.10)');
+  gr.addColorStop(0.78,  t + '0.17)');
+  gr.addColorStop(0.895, w + '0.40)');
+  gr.addColorStop(0.955, w + '0.95)');
+  gr.addColorStop(0.985, t + '0.45)');
+  gr.addColorStop(1.00,  t + '0)');
+  x.fillStyle = gr; x.fillRect(0, 0, SS, SS);
+  return s;
+}
+function dotSprite(rgb){
+  var s = document.createElement('canvas'); s.width = s.height = 16;
+  var x = s.getContext('2d');
+  var t = 'rgba(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ',';
+  var gr = x.createRadialGradient(8, 8, 0, 8, 8, 8);
+  gr.addColorStop(0, 'rgba(255,255,255,0.95)');
+  gr.addColorStop(0.35, t + '0.55)');
+  gr.addColorStop(1, t + '0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 16, 16);
+  return s;
+}
+var RINGS = PAL.map(ringSprite), DOTS = PAL.map(dotSprite);
+
+/* =========================================================================
+   5. VIEW STATE, BUFFERS
+   ========================================================================= */
+var W = 1, H = 1, DPR = 1;
+var view = { cx: 0, cy: 0.10, scale: 300 };
+var SCALE0 = 300;
+var lens = { x: 0.9, y: 0.9, r: 0.5, tx: 0.9, ty: 0.9 };
+var acc = document.createElement('canvas'), accx = acc.getContext('2d');
+var g1 = document.createElement('canvas'), g1x = g1.getContext('2d');
+var g2 = document.createElement('canvas'), g2x = g2.getContext('2d');
+var vignette = null, sweep = null;
+
+function resize(){
+  var zoom = view.scale / SCALE0;
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = Math.max(1, Math.floor(window.innerWidth * DPR));
+  H = Math.max(1, Math.floor(window.innerHeight * DPR));
+  cv.width = acc.width = W; cv.height = acc.height = H;
+  g1.width = g2.width = Math.max(2, W >> 2);
+  g1.height = g2.height = Math.max(2, H >> 2);
+  vignette = ctx.createRadialGradient(W/2, H/2, Math.min(W,H)*0.30, W/2, H/2, Math.hypot(W,H)*0.62);
+  vignette.addColorStop(0, 'rgba(2,3,10,0)');
+  vignette.addColorStop(1, 'rgba(2,3,10,0.62)');
+  SCALE0 = 300 * Math.min(W, H) / 900;
+  view.scale = SCALE0 * zoom;
+  kick(true);
+}
+function screenOf(x, y){ return [(x - view.cx) * view.scale + W/2, H/2 - (y - view.cy) * view.scale]; }
+function canonOf(px, py){ return [(px - W/2) / view.scale + view.cx, (H/2 - py) / view.scale + view.cy]; }
+
+/* =========================================================================
+   6. THE CURSOR MIRROR  --  inversion in a circle riding the pointer
+   Every bead is pushed through this involution each frame, so the packing is
+   turned inside out, live, as the circle sweeps over it.
+   ========================================================================= */
+function lensR(){ return Math.max(0.05, 0.30 * Math.min(W, H) / view.scale); }
+
+function needRegion(){
+  var hw = W/(2*view.scale), hh = H/(2*view.scale);
+  var corners = [[view.cx-hw, view.cy-hh], [view.cx+hw, view.cy-hh],
+                 [view.cx-hw, view.cy+hh], [view.cx+hw, view.cy+hh]];
+  var r = lens.r, cx = lens.x, cy = lens.y, i, q;
+  var inside = false;
+  for(i = 0; i < 4; i++){
+    var px = corners[i][0] - cx, py = corners[i][1] - cy;
+    if(px*px + py*py < r*r) inside = true;
+  }
+  if(inside || (Math.abs(cx - view.cx) < hw + r && Math.abs(cy - view.cy) < hh + r)){
+    return [-26, -26, 26, 26];                       /* image runs to infinity */
+  }
+  var x0 = 1e18, y0 = 1e18, x1 = -1e18, y1 = -1e18;
+  for(i = 0; i < 4; i++){
+    q = invPoint(corners[i][0], corners[i][1], cx, cy, r);
+    x0 = Math.min(x0, q[0]); x1 = Math.max(x1, q[0]);
+    y0 = Math.min(y0, q[1]); y1 = Math.max(y1, q[1]);
+  }
+  var mx = (x1 - x0) * 0.35 + 0.2, my = (y1 - y0) * 0.35 + 0.2;
+  return [x0 - mx, y0 - my, x1 + mx, y1 + my];
+}
+
+/* ---- progressive orbit generation, two slots so detail never blinks ----- */
+var active = null, pending = null, lastBuild = 0;
+function kick(force){
+  var need = needRegion(), minR = 0.35 / view.scale;
+  var g = pending || active;
+  if(!force && g && lastBuild > (+new Date() - 260)) return;
+  var cov = g && g.need;
+  var covered = cov &&
+    need[0] > cov[0] && need[1] > cov[1] && need[2] < cov[2] && need[3] < cov[3] &&
+    minR > g.minR * 0.6;
+  if(covered && !force) return;
+  pending = new Gen(need, minR);
+  lastBuild = +new Date();
+}
+function feed(ms){
+  if(pending){
+    pending.step(ms);
+    if(!active || pending.done || pending.out.length > active.out.length * 0.7){ active = pending; pending = null; }
+  } else if(active && !active.done) active.step(ms);
+}
+
+/* =========================================================================
+   7. DRAWING
+   ========================================================================= */
+function drawScene(t){
+  accx.clearRect(0, 0, W, H);
+  var g = active; if(!g) return;
+  var out = g.out, n = out.length / 6, i;
+  var sm = mirrorMat(lens.x, lens.y, lens.r);
+  var sc = view.scale, hw = W/2, hh = H/2;
+  var tiny = [], mid = [], big = [];
+  for(i = 0; i < 18; i++) tiny.push([]);
+  for(i = 0; i < n; i++){
+    var b = i * 6;
+    var c = toCR(mv(sm, [out[b], out[b+1], out[b+2], out[b+3]]));
+    if(!c) continue;
+    var sx = (c.x - view.cx) * sc + hw, sy = hh - (c.y - view.cy) * sc, rpx = c.r * sc;
+    if(sx + 1.3*rpx < 0 || sx - 1.3*rpx > W || sy + 1.3*rpx < 0 || sy - 1.3*rpx > H) continue;
+    var hue = out[b+4], pi = palIndex(hue) | 0;
+    var gain = 0.5 + 0.9 * Math.pow(Math.min(1, 14 / Math.max(rpx, 1)), 0.8);
+    var alpha = Math.min(1, gain);
+    if(rpx < 2.4){
+      var tier = rpx < 1.1 ? 0 : (rpx < 1.7 ? 1 : 2);
+      var arr = tiny[pi * 3 + tier];
+      arr.push(sx, sy, Math.max(0.55, rpx), alpha);
+    } else if(rpx < 26){
+      mid.push(sx, sy, rpx, pi, alpha);
+    } else {
+      big.push(sx, sy, rpx, pi, alpha);
+    }
+  }
+  /* tiny beads: one fill per tint/tier bucket */
+  for(i = 0; i < 18; i++){
+    var arr = tiny[i]; if(!arr.length) continue;
+    accx.globalAlpha = 0.30 + 0.10 * (i % 3) + 0.25;
+    accx.fillStyle = 'rgb(' + PAL[(i/3)|0][0] + ',' + PAL[(i/3)|0][1] + ',' + PAL[(i/3)|0][2] + ')';
+    accx.beginPath();
+    for(var k = 0; k < arr.length; k += 4){
+      accx.moveTo(arr[k] + arr[k+2], arr[k+1]);
+      accx.arc(arr[k], arr[k+1], arr[k+2], 0, TAU);
+    }
+    accx.fill();
+  }
+  accx.globalAlpha = 1;
+  /* mid beads: the pearl sprites */
+  for(i = 0; i < mid.length; i += 5){
+    accx.globalAlpha = Math.min(1, mid[i+4]);
+    accx.drawImage(RINGS[mid[i+3]], mid[i] - mid[i+2], mid[i+1] - mid[i+2], 2*mid[i+2], 2*mid[i+2]);
+  }
+  accx.globalAlpha = 1;
+  /* big beads: crisp vector rims */
+  for(i = 0; i < big.length; i += 5){
+    var x = big[i], y = big[i+1], r = big[i+2], rgb = PAL[big[i+3]];
+    accx.globalAlpha = 0.16;
+    accx.strokeStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+    accx.lineWidth = r * 0.13; accx.beginPath(); accx.arc(x, y, r*0.94, 0, TAU); accx.stroke();
+    accx.globalAlpha = Math.min(1, 0.55 + big[i+4]*0.45);
+    accx.lineWidth = Math.max(1, r * 0.045); accx.beginPath(); accx.arc(x, y, r*0.94, 0, TAU); accx.stroke();
+    accx.globalAlpha = 0.75; accx.strokeStyle = '#ffffff';
+    accx.beginPath(); accx.arc(x, y, r*0.94, -0.5, 0.6); accx.stroke();
+  }
+  accx.globalAlpha = 1;
+  /* kiss points of the packing + limit-set dust: stardust, twinkling */
+  var sp = g.sparks, du = g.dust;
+  accx.globalCompositeOperation = 'lighter';
+  for(var pass = 0; pass < 2; pass++){
+    var arr2 = pass ? du : sp;
+    for(i = 0; i < arr2.length; i += 2){
+      var q = invPoint(arr2[i], arr2[i+1], lens.x, lens.y, lens.r);
+      var px = (q[0] - view.cx) * sc + hw, py = hh - (q[1] - view.cy) * sc;
+      if(px < -4 || px > W+4 || py < -4 || py > H+4) continue;
+      var tw = 0.5 + 0.5 * Math.sin(t * 0.003 + i * 1.7);
+      accx.globalAlpha = (pass ? 0.10 : 0.34) * (0.35 + 0.65 * tw);
+      var rr = (pass ? 1.0 : 1.5) * DPR * (0.7 + 0.5 * tw);
+      accx.drawImage(DOTS[(i/2) % 6 | 0], px - rr, py - rr, 2*rr, 2*rr);
+    }
+  }
+  accx.globalAlpha = 1;
+  accx.globalCompositeOperation = 'source-over';
+}
+
+function composite(t){
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'rgba(2,3,10,0.30)';               /* persistence trails */
+  ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(acc, 0, 0);
+  /* bloom: downsample, spread, add */
+  g1x.clearRect(0, 0, g1.width, g1.height);
+  g1x.drawImage(cv, 0, 0, g1.width, g1.height);
+  g2x.clearRect(0, 0, g2.width, g2.height);
+  g2x.globalCompositeOperation = 'lighter';
+  var d = Math.max(2, g1.width >> 4);
+  var taps = [[0,0],[d,0],[-d,0],[0,d],[0,-d],[d,d],[-d,d],[d,-d],[-d,-d]];
+  for(var i = 0; i < taps.length; i++){
+    g2x.globalAlpha = i ? 0.16 : 0.30;
+    g2x.drawImage(g1, taps[i][0], taps[i][1]);
+  }
+  g2x.globalAlpha = 1; g2x.globalCompositeOperation = 'source-over';
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.5;
+  ctx.drawImage(g2, 0, 0, W, H);
+  ctx.globalAlpha = 1;
+  /* pearl sheen following the cursor */
+  var p = screenOf(lens.x, lens.y);
+  sweep = ctx.createRadialGradient(p[0], p[1], 0, p[0], p[1], Math.hypot(W, H) * 0.42);
+  sweep.addColorStop(0, 'rgba(178,198,255,0.10)');
+  sweep.addColorStop(0.45, 'rgba(150,170,255,0.045)');
+  sweep.addColorStop(1, 'rgba(120,140,255,0)');
+  ctx.fillStyle = sweep; ctx.fillRect(0, 0, W, H);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = vignette; ctx.fillRect(0, 0, W, H);
+  /* the cursor mirror itself */
+  var rpx = lens.r * view.scale;
+  ctx.strokeStyle = 'rgba(235,242,255,0.5)'; ctx.lineWidth = 1.2 * DPR;
+  ctx.beginPath(); ctx.arc(p[0], p[1], rpx, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(160,190,255,0.16)'; ctx.lineWidth = 5 * DPR;
+  ctx.beginPath(); ctx.arc(p[0], p[1], rpx, 0, TAU); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(p[0] - DPR, p[1] - DPR, 2*DPR, 2*DPR);
+}
+
+/* =========================================================================
+   8. INTERACTION  --  the cursor is a circle, and it acts on the group's orbit
+   ========================================================================= */
+var lastInput = -1e9, clock = 0, dragging = false, dragX = 0, dragY = 0;
+var pointers = {}, pinchD = 0;
+
+function wake(){ lastInput = clock; var d = document.querySelectorAll('#hud,#read,#tips');
+  for(var i = 0; i < d.length; i++) d[i].classList.remove('dim'); }
+
+function onMove(cx, cy){
+  wake();
+  var q = canonOf(cx * DPR, cy * DPR);
+  lens.tx = q[0]; lens.ty = q[1];
+  if(dragging){
+    view.cx -= (cx * DPR - dragX) / view.scale;
+    view.cy += (cy * DPR - dragY) / view.scale;
+    dragX = cx * DPR; dragY = cy * DPR;
+    kick(false);
+  }
+}
+function onWheel(e){
+  wake();
+  if(e.preventDefault) e.preventDefault();
+  var d = (e.deltaY !== undefined) ? e.deltaY : -e.wheelDelta;
+  var f = Math.exp(-d * 0.0014);
+  var ns = Math.max(40, Math.min(SCALE0 * 200000, view.scale * f));
+  f = ns / view.scale;
+  var q = canonOf(e.clientX * DPR, e.clientY * DPR);
+  view.scale = ns;
+  view.cx = q[0] - (e.clientX * DPR - W/2) / view.scale;
+  view.cy = q[1] + (e.clientY * DPR - H/2) / view.scale;
+  kick(false);
+}
+
+if(window.PointerEvent){
+  cv.addEventListener('pointerdown', function(e){
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY }; wake();
+    if(Object.keys(pointers).length === 1){ dragging = true; dragX = e.clientX * DPR; dragY = e.clientY * DPR; }
+  });
+  cv.addEventListener('pointermove', function(e){
+    if(pointers[e.pointerId]) pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if(ids.length >= 2){
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      if(pinchD > 0 && d > 0){
+        view.scale = Math.max(40, Math.min(SCALE0 * 200000, view.scale * d / pinchD));
+        kick(false);
+      }
+      pinchD = d;
+      var q = canonOf((a.x + b.x) * 0.5 * DPR, (a.y + b.y) * 0.5 * DPR);
+      lens.tx = q[0]; lens.ty = q[1];
+      wake();
+      return;
+    }
+    onMove(e.clientX, e.clientY);
+  }, { passive: true });
+  var up = function(e){ delete pointers[e.pointerId]; pinchD = 0;
+    if(Object.keys(pointers).length === 0) dragging = false; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+} else {
+  cv.addEventListener('mousemove', function(e){ onMove(e.clientX, e.clientY); });
+  cv.addEventListener('mousedown', function(e){ dragging = true; dragX = e.clientX * DPR; dragY = e.clientY * DPR; wake(); });
+  window.addEventListener('mouseup', function(){ dragging = false; });
+  cv.addEventListener('touchstart', function(e){ wake(); }, { passive: true });
+  cv.addEventListener('touchmove', function(e){
+    if(e.touches.length === 1) onMove(e.touches[0].clientX, e.touches[0].clientY);
+    else if(e.touches.length === 2 && e.preventDefault) e.preventDefault();
+  }, { passive: false });
+}
+window.addEventListener('wheel', onWheel, { passive: false });
+window.addEventListener('resize', resize);
+cv.addEventListener('dblclick', function(){
+  view.cx = 0; view.cy = 0.10;
+  view.scale = SCALE0 = 300 * Math.min(W, H) / 900;
+  kick(true); wake();
+});
+window.addEventListener('keydown', function(e){
+  if(e.key === 'h' || e.key === 'H'){
+    var d = document.querySelectorAll('#hud,#read,#tips');
+    for(var i = 0; i < d.length; i++) d[i].classList.toggle('dim');
+  }
+});
+
+/* =========================================================================
+   9. MAIN LOOP  --  alive with no input: a loxodromic breath and twinkle
+   ========================================================================= */
+var rd = document.getElementById('rd'), hudT = 0;
+function hudTick(t){
+  if(t - hudT < 220) return; hudT = t;
+  var z = view.scale / SCALE0, depth = Math.log(Math.max(z, 1e-9)) / Math.LN2;
+  var g = active || { out: [], sparks: [] };
+  rd.innerHTML = 'zoom &times;' + (z < 10 ? z.toFixed(2) : z.toFixed(0)) +
+    ' &nbsp; depth ' + depth.toFixed(1) + '<br>beads ' + (g.out.length / 6 | 0) +
+    ' &nbsp; kisses ' + (g.sparks.length / 2 | 0) +
+    '<br>cursor &nbsp;<i>k</i> = ' + (1 / lens.r).toFixed(2);
+  if(t - lastInput > 4000){
+    var d = document.querySelectorAll('#hud,#read,#tips');
+    for(var i = 0; i < d.length; i++) d[i].classList.add('dim');
+  }
+}
+
+function frame(t){
+  raf(frame);
+  clock = t;
+  var idle = (t - lastInput > 4000);
+  if(idle){                       /* the mirror drifts on a slow Lissajous */
+    var e = Math.min(W, H) / view.scale * 0.42;
+    lens.tx = view.cx + Math.sin(t * 0.00023) * e * 1.3;
+    lens.ty = view.cy + Math.sin(t * 0.00031 + 1.7) * e;
+  }
+  lens.x += (lens.tx - lens.x) * 0.10;
+  lens.y += (lens.ty - lens.y) * 0.10;
+  lens.r = lensR() * (1 + 0.04 * Math.sin(t * 0.0006));   /* breath */
+  feed(6);
+  kick(false);
+  drawScene(t);
+  composite(t);
+  hudTick(t);
+}
+
+resize();
+raf(frame);
+})();
+</script>
+</body>
+</html>
